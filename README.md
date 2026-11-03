@@ -188,6 +188,10 @@ Layout:
 ```text
 crates/sidetrack-core   all logic: naming, config, registry, git, compose, detection,
                         Postgres engine, planner, applier
+
 crates/sidetrack        the CLI and git hook
 tests/e2e               a compose fixture and the end-to-end script
 ```
+## Ackowledgement
+
+A big thanks to @shahadulhaider vai for the idea of this project
