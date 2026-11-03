@@ -194,4 +194,4 @@ tests/e2e               a compose fixture and the end-to-end script
 ```
 ## Ackowledgement
 
-A big thanks to @shahadulhaider vai for the idea of this project
+A big thanks to [@shahadulhaider vai](https://github.com/shahadulhaider) for the idea of this project
