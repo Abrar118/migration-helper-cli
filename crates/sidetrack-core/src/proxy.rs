@@ -213,6 +213,9 @@ pub struct Proxy {
     pub upstream: String,
     /// File holding the active DB branch.
     pub target_file: PathBuf,
+    /// Hold file, shared by every worktree's proxy (`hold_path`'s location in
+    /// a single checkout).
+    pub hold_file: PathBuf,
     /// How often the watcher re-reads `target_file`.
     pub poll: Duration,
 }
@@ -308,7 +311,7 @@ impl Proxy {
         }
         // Wait while the database this connection would reach is being copied.
         let asked = startup.param("database").map(|d| d.to_vec());
-        let hold_file = hold_path(&self.target_file);
+        let hold_file = &self.hold_file;
         let mut held = false;
         let target = loop {
             let target = read_target(&self.target_file, &self.app_db);
@@ -317,7 +320,7 @@ impl Proxy {
                 Some(d) => d.clone(),
                 None => vec![],
             };
-            match read_hold(&hold_file) {
+            match read_hold(hold_file) {
                 Some(h) if h.as_bytes() == reaches.as_slice() => {
                     if !held {
                         log(&format!("connection {id}: holding while {h} is copied"));
@@ -469,6 +472,7 @@ mod tests {
             app_db: "app_dev".into(),
             upstream,
             target_file: target.clone(),
+            hold_file: hold_path(&target),
             poll: Duration::from_millis(20),
         };
         thread::spawn(move || proxy.serve(listener, Arc::new(|_: &str| {})));

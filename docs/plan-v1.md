@@ -130,6 +130,25 @@ Decisions:
 
 `tests/e2e/proxy.sh` covers it all against real Docker. The app container reaches the host proxy via `host.docker.internal` (`extra_hosts: host-gateway` on Linux).
 
+## Git worktrees
+
+Each git worktree is a checkout with its own active DB branch. All worktrees share one database server and one registry project.
+- **Shared server:** `Workspace.main_root` is the main worktree's root. The registry key and `db_compose` use it, so the database service, `psql`, `df` and the published port all come from the main worktree's compose project. App services still come from this checkout's compose (`compose`).
+- **Per worktree:** the active DB and the proxy's pid, log and target files sit under `git_path`, which is per worktree. Each linked worktree's proxy listens on the next free port after `routing.listen`. The port is chosen once and saved in `sidetrack-proxy-listen` in that worktree's git dir.
+- **Shared hold:** the hold file is in the common git dir, so a copy holds every worktree's proxy, not just this one's.
+- **`World.elsewhere`** maps databases to the other worktrees using them. It's read from their target files (proxy mode) or env files.
+  - `delete` and `rename` refuse those databases, and `gc` keeps them.
+  - Copying one holds connections (proxy mode) or notes that its connections will be closed (env mode).
+  - Switching to one warns that both apps will share it.
+
+Decisions:
+
+26. **Worktrees share the main worktree's database server.** Otherwise each worktree's compose project, named after its directory, would start its own Postgres, and DB branches couldn't be copied between them. In a linked worktree, start only the app services.
+27. **Worktree ports are allocated once and saved**, rather than derived from the worktree's position in `git worktree list`. Positions shift when a worktree is removed, and the app's URL would then point at the wrong proxy.
+28. **Env mode works in worktrees too, but proxy mode is the intended setup.** A containerized app in a worktree reaches the database by host (`host.docker.internal:<port>`). With env mode, `db` would resolve to the worktree's own compose network.
+
+`tests/e2e/proxy.sh` adds a worktree: own DB branch, own port (54330), main untouched, delete refused.
+
 ## Test strategy
 
 - **Unit tests:** naming, envfile, config round-trip, compose JSON parsing, detection on fixture directories, file-set logic, planner (pure inputs).

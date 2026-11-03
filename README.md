@@ -146,6 +146,20 @@ services:
 - **Encryption:** the proxy doesn't speak TLS. Use `sslmode=prefer` (the default) or `disable`.
 - **Linux:** when the app runs in a container, listen on `0.0.0.0` (or the Docker bridge address), not `127.0.0.1`.
 
+### Git worktrees
+
+With proxy mode, each `git worktree` gets its own DB branch, so several branches can run side by side:
+
+```bash
+git worktree add -b feature/x ../shop-x
+cd ../shop-x && sidetrack switch     # creates feature_x_db and starts this worktree's proxy
+sidetrack status                     # shows its port (e.g. 54321) and what other worktrees use
+```
+
+- **Shared server:** every worktree uses the main worktree's database server. Start only the app services in a worktree, e.g. `docker compose up -d --no-deps api`.
+- **Ports:** each linked worktree's proxy listens on the next free port after `routing.listen`, and keeps that port. Point that worktree's app at it.
+- **Protection:** sidetrack won't delete or rename a database another worktree is using, and `gc` keeps it.
+
 Detected migration tools: Alembic, Django, Prisma, Rails, Flyway and Knex. Anything else works too: point `dirs` at the migration folder(s) and set `command`.
 
 ## Limitations (v1)

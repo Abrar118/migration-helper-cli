@@ -19,6 +19,7 @@ cd "$proj"
 plog="$proj/.git/sidetrack-proxy.log"
 cleanup() {
   "$st" -C "$proj" proxy --stop >/dev/null 2>&1 || true
+  "$st" -C "$work/wt" proxy --stop >/dev/null 2>&1 || true
   docker compose down -v --remove-orphans >/dev/null 2>&1 || true
   rm -rf "$work"
 }
@@ -110,6 +111,22 @@ if grep -q "Recreate" "$work/main.txt"; then fail "proxy mode shouldn't recreate
 for _ in $(seq 1 30); do kill -0 "$held" 2>/dev/null || break; sleep 0.2; done
 if kill -0 "$held" 2>/dev/null; then fail "the open connection to feature_a_db should have been closed"; fi
 grep -q "closed 1 connection" "$plog" || fail "proxy should log the closed connection"
+
+step "a git worktree gets its own database and its own proxy port"
+wt="$work/wt"
+git worktree add -q -b feature/w "$wt"
+"$st" -C "$wt" switch --yes 2>&1 | tee "$work/wt.txt"
+grep -q "Proxy running on 0.0.0.0:54330" "$work/wt.txt" || fail "the worktree's proxy should get the next port"
+grep -q "Create feature_w_db" "$work/wt.txt" || fail "the worktree should get its own DB branch"
+wt_sql() { docker compose exec -T api psql "postgresql://app:secret@host.docker.internal:54330/app_dev" -qtAX -c "$1"; }
+[ "$(wt_sql 'select current_database()')" = feature_w_db ] || fail "the worktree's app_dev should mean feature_w_db"
+[ "$(app_sql 'select current_database()')" = app_dev ] || fail "the main worktree should still be on app_dev"
+"$st" -C "$wt" status | tee "$work/wt-status.txt"
+grep -q "Worktree:" "$work/wt-status.txt" || fail "status should say it's a linked worktree"
+grep -q "Elsewhere:   app_dev" "$work/wt-status.txt" || fail "status should show the main worktree's database"
+if "$st" delete feature/w --yes 2>"$work/del.txt"; then fail "deleting a database another worktree uses should be refused"; fi
+grep -q "in use in the worktree" "$work/del.txt" || fail "delete should say which worktree uses it"
+"$st" -C "$wt" proxy --stop >/dev/null
 
 step "status and doctor know about the proxy"
 "$st" status | tee "$work/status.txt"

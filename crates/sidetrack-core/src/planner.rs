@@ -35,6 +35,9 @@ pub struct World {
     /// Proxy mode: whether the proxy is accepting connections. `None` in env mode.
     #[serde(default)]
     pub proxy_running: Option<bool>,
+    /// Databases other git worktrees of this repo are using: db name → worktree root.
+    #[serde(default)]
+    pub elsewhere: BTreeMap<String, String>,
     /// What each database's version table says (only for tools with a reader).
     /// When present, it replaces sidetrack's own records as the truth.
     #[serde(default)]
@@ -432,6 +435,12 @@ impl<'a> Planner<'a> {
                     self.ensure_env_writable()?;
                     plan.summary =
                         format!("Switch DB from {active} to {} for {git_branch}", b.db_name);
+                    if let Some(wt) = self.world.elsewhere.get(&b.db_name) {
+                        plan.warnings.push(format!(
+                            "{} is also in use in the worktree at {wt}; both apps will share it",
+                            b.db_name
+                        ));
+                    }
                     // The proxy needs no restart; env mode recreates the app.
                     let restart = if self.cfg.routing.is_proxy() {
                         vec![]
@@ -564,7 +573,10 @@ impl<'a> Planner<'a> {
                 plan.notes.push(base.why.clone());
                 if base.db_name == active {
                     pause = self.push_pause(plan, &base.db_name, &running);
+                } else if self.world.elsewhere.contains_key(&base.db_name) {
+                    pause = self.push_pause(plan, &base.db_name, &[]);
                 }
+                self.note_elsewhere(plan, &base.db_name);
                 let stop = matches!(pause, Pause::Stopped(_));
                 self.push_terminate(plan, &base.db_name, stop);
                 plan.push(Step::CloneDatabase {
@@ -644,7 +656,9 @@ impl<'a> Planner<'a> {
     /// Keep the app away from `db` while it's copied, renamed or dropped: hold its
     /// new connections in the proxy when one is running, else stop `services`.
     fn push_pause(&self, plan: &mut Plan, db: &str, services: &[String]) -> Pause {
-        if self.cfg.routing.is_proxy() && self.world.proxy_running == Some(true) {
+        let other_worktree = self.world.elsewhere.contains_key(db);
+        if self.cfg.routing.is_proxy() && (self.world.proxy_running == Some(true) || other_worktree)
+        {
             plan.push(Step::HoldConnections { db: db.to_string() });
             Pause::Held(db.to_string())
         } else if !services.is_empty() {
@@ -662,6 +676,24 @@ impl<'a> Planner<'a> {
             Pause::Held(db) => plan.push(Step::ReleaseConnections { db }),
             Pause::Stopped(services) => plan.push(Step::StartServices { services }),
             Pause::Nothing => {}
+        }
+    }
+
+    /// Refuse to drop or rename a database another worktree's app is using.
+    fn ensure_not_elsewhere(&self, db: &str) -> Result<()> {
+        if let Some(wt) = self.world.elsewhere.get(db) {
+            bail!("{db} is in use in the worktree at {wt}; switch that worktree to another branch first");
+        }
+        Ok(())
+    }
+
+    fn note_elsewhere(&self, plan: &mut Plan, db: &str) {
+        if let Some(wt) = self.world.elsewhere.get(db) {
+            plan.notes.push(if self.cfg.routing.is_proxy() {
+                format!("{db} is in use in the worktree at {wt}; its proxy holds new connections during the copy")
+            } else {
+                format!("{db} is in use in the worktree at {wt}; its open connections are closed for the copy")
+            });
         }
     }
 
@@ -869,6 +901,7 @@ impl<'a> Planner<'a> {
                 b.db_name
             );
         }
+        self.ensure_not_elsewhere(&b.db_name)?;
         let mut plan = Plan::new(
             PlanKind::Delete,
             format!("Delete {} (git branch {})", b.db_name, b.git_branch),
@@ -918,6 +951,13 @@ impl<'a> Planner<'a> {
         let mut freed = 0;
         for b in &self.world.branches {
             if self.world.active_db.as_deref() == Some(b.db_name.as_str()) {
+                continue;
+            }
+            if let Some(wt) = self.world.elsewhere.get(&b.db_name) {
+                plan.notes.push(format!(
+                    "{} is kept: it's in use in the worktree at {wt}",
+                    b.db_name
+                ));
                 continue;
             }
             let gone = !self.git.branch_exists(&b.git_branch)?;
@@ -1067,6 +1107,9 @@ impl<'a> Planner<'a> {
             .with_context(|| format!("no DB branch for {old}"))?;
         if let Some(other) = self.branch_for_git(new) {
             bail!("{new} already has a DB branch ({})", other.db_name);
+        }
+        if b.db_name != naming::db_name_for_branch(new) && !b.adopted {
+            self.ensure_not_elsewhere(&b.db_name)?;
         }
         let plain = naming::db_name_for_branch(new);
         // Adopted databases (e.g. the original app_dev) keep their name; only the link moves.
@@ -1258,6 +1301,7 @@ mod tests {
             env_file_tracked: false,
             disk: None,
             proxy_running: None,
+            elsewhere: BTreeMap::new(),
             readings: BTreeMap::new(),
             version_table: None,
             reader_error: None,
@@ -1372,6 +1416,65 @@ mod tests {
         let k = kinds(&Planner::new(&c, &repo, &w).snapshot(None, 1).unwrap());
         assert_eq!(k.first(), Some(&"hold"), "{k:?}");
         assert!(k.contains(&"release") && !k.contains(&"stop"), "{k:?}");
+    }
+
+    #[test]
+    fn databases_used_by_other_worktrees_are_protected() {
+        let (_d, repo) = repo();
+        commit_file(&repo, "migrations/001.sql", "1");
+        let mut w = world(
+            vec![
+                branch(1, "main", "main_db", &["001.sql"], 1),
+                branch(2, "gone", "gone_db", &["001.sql"], 2),
+            ],
+            "main_db",
+        );
+        w.elsewhere = BTreeMap::from([("gone_db".to_string(), "/r-wt".to_string())]);
+        let c = cfg();
+        let p = Planner::new(&c, &repo, &w);
+        let err = p.delete("gone").unwrap_err().to_string();
+        assert!(err.contains("worktree at /r-wt"), "{err}");
+        let gc = p.gc().unwrap();
+        assert!(
+            !kinds(&gc).contains(&"drop"),
+            "gc keeps it: {:?}",
+            kinds(&gc)
+        );
+        assert!(gc
+            .notes
+            .iter()
+            .any(|n| n.contains("in use in the worktree")));
+    }
+
+    #[test]
+    fn copying_another_worktrees_database_holds_its_proxy() {
+        let (_d, repo) = repo();
+        commit_file(&repo, "migrations/001.sql", "1");
+        git(&repo, &["checkout", "-q", "-b", "c"]);
+        // This (new) worktree's own target is still main_db, but so is the main
+        // worktree's: the copy must hold the other worktree's connections.
+        let mut w = world(
+            vec![branch(1, "main", "main_db", &["001.sql"], 1)],
+            "other_db",
+        );
+        w.server_dbs.insert(
+            "other_db".into(),
+            DbInfo {
+                name: "other_db".into(),
+                size_bytes: 1,
+                allow_connections: true,
+            },
+        );
+        w.elsewhere = BTreeMap::from([("main_db".to_string(), "/r".to_string())]);
+        w.proxy_running = Some(false);
+        let c = proxy_cfg();
+        let plan = Planner::new(&c, &repo, &w)
+            .create("c", Some("main"), false)
+            .unwrap();
+        let k = kinds(&plan);
+        assert_eq!(k[0], "hold", "{k:?}");
+        assert!(k.contains(&"release") && !k.contains(&"stop"), "{k:?}");
+        assert!(plan.notes.iter().any(|n| n.contains("worktree at /r")));
     }
 
     #[test]

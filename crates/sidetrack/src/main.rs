@@ -402,7 +402,7 @@ fn init(
 
     let ws = Workspace::from_parts(git, cfg, Registry::open(&registry::default_path()?)?);
     anyhow::ensure!(
-        ws.compose
+        ws.db_compose
             .running_services()?
             .contains(&ws.cfg.database.service),
         "start the database first: `docker compose up -d {}`",
@@ -556,11 +556,18 @@ fn status(dir: &Path, opts: &Opts) -> Result<bool> {
         return Ok(true);
     }
     println!("Git branch:  {}", branch.as_deref().unwrap_or("(detached)"));
+    if ws.is_linked_worktree() {
+        println!(
+            "Worktree:    {} (shares databases with {})",
+            ws.root.display(),
+            ws.main_root.display()
+        );
+    }
     if let Some(up) = world.proxy_running {
         println!(
             "Proxy:       {} on {}{}",
             ws.cfg.routing.database.as_deref().unwrap_or("?"),
-            ws.cfg.routing.listen_addr(),
+            ws.proxy_listen(),
             if up {
                 ""
             } else {
@@ -591,6 +598,9 @@ fn status(dir: &Path, opts: &Opts) -> Result<bool> {
             m.pending.len(),
             m.unknown.len()
         );
+    }
+    for (db, wt) in &world.elsewhere {
+        println!("Elsewhere:   {db} is in use in the worktree at {wt}");
     }
     if let Some(e) = &world.reader_error {
         println!(
@@ -771,11 +781,11 @@ fn doctor(dir: &Path, opts: &Opts) -> Result<bool> {
             "proxy",
             up,
             if up {
-                format!("{} → {target}", ws.cfg.routing.listen_addr())
+                format!("{} → {target}", ws.proxy_listen())
             } else {
                 format!(
                     "nothing listening on {}; start it with `sidetrack proxy`",
-                    ws.cfg.routing.listen_addr()
+                    ws.proxy_listen()
                 )
             },
         );
@@ -837,7 +847,11 @@ fn doctor(dir: &Path, opts: &Opts) -> Result<bool> {
     }
     check("docker", true, "reachable".into());
     let running = ws.compose.running_services().unwrap_or_default();
-    let db_up = running.contains(&ws.cfg.database.service);
+    let db_up = ws
+        .db_compose
+        .running_services()
+        .unwrap_or_default()
+        .contains(&ws.cfg.database.service);
     check(
         "database service",
         db_up,
@@ -996,7 +1010,7 @@ fn proxy(dir: &Path, listen: Option<String>) -> Result<bool> {
         ws.cfg.routing.mode
     );
     let app_db = ws.cfg.routing.database.clone().unwrap_or_default();
-    let listen = listen.unwrap_or_else(|| ws.cfg.routing.listen_addr().to_string());
+    let listen = listen.unwrap_or_else(|| ws.proxy_listen());
     let upstream = ws.proxy_upstream()?;
     let listener = std::net::TcpListener::bind(&listen)
         .with_context(|| format!("can't listen on {listen} (is another proxy running?)"))?;
@@ -1009,6 +1023,7 @@ fn proxy(dir: &Path, listen: Option<String>) -> Result<bool> {
         app_db,
         upstream,
         target_file,
+        hold_file: ws.proxy_hold_path(),
         poll: std::time::Duration::from_millis(250),
     };
     p.serve(
@@ -1033,10 +1048,7 @@ fn proxy_daemon(dir: &Path, listen: Option<String>) -> Result<bool> {
         "routing.mode in sidetrack.toml isn't \"proxy\""
     );
     if listen.is_none() && ws.proxy_running() {
-        println!(
-            "The proxy is already running on {}.",
-            ws.cfg.routing.listen_addr()
-        );
+        println!("The proxy is already running on {}.", ws.proxy_listen());
         return Ok(true);
     }
     println!("{}", start_proxy(&ws, listen.as_deref())?);
@@ -1079,8 +1091,8 @@ pub(crate) fn start_proxy(ws: &Workspace, listen: Option<&str>) -> Result<String
     }
     let mut child = cmd.spawn().context("starting the proxy")?;
     let addr = listen
-        .unwrap_or_else(|| ws.cfg.routing.listen_addr())
-        .to_string();
+        .map(str::to_string)
+        .unwrap_or_else(|| ws.proxy_listen());
     let probe = addr.replace("0.0.0.0", "127.0.0.1");
     for _ in 0..50 {
         if let Some(status) = child.try_wait()? {
@@ -1116,7 +1128,7 @@ fn proxy_stop(dir: &Path) -> Result<bool> {
         if ws.proxy_running() {
             bail!(
                 "something is listening on {}, but it wasn't started with `sidetrack proxy --daemon`; stop it where it runs",
-                ws.cfg.routing.listen_addr()
+                ws.proxy_listen()
             );
         }
         println!("The proxy isn't running.");

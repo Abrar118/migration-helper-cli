@@ -19,10 +19,17 @@ use crate::registry::{self, DbBranch, Project, Registry};
 use crate::schema;
 
 pub struct Workspace {
+    /// This checkout (a linked worktree's own root inside one).
     pub root: PathBuf,
+    /// The main worktree's root. Equal to `root` outside linked worktrees. All
+    /// worktrees share its database server and its registry entry.
+    pub main_root: PathBuf,
     pub git: Git,
     pub cfg: Config,
+    /// Compose in this checkout: the app services.
     pub compose: Compose,
+    /// Compose in the main worktree: the database service.
+    pub db_compose: Compose,
     pub pg: Postgres,
     pub reg: Registry,
 }
@@ -38,20 +45,106 @@ impl Workspace {
 
     pub fn from_parts(git: Git, cfg: Config, reg: Registry) -> Self {
         let root = git.root().to_path_buf();
+        let main_root = git.main_worktree().ok().flatten().unwrap_or(root.clone());
         let compose = compose_for(&cfg, &root);
-        let pg = postgres_for(&cfg, &compose);
+        let db_compose = compose_for(&cfg, &main_root);
+        let pg = postgres_for(&cfg, &db_compose);
         Self {
             root,
+            main_root,
             git,
             cfg,
             compose,
+            db_compose,
             pg,
             reg,
         }
     }
 
+    /// Registry key: the main worktree's root, so worktrees share DB branches.
     pub fn root_key(&self) -> String {
-        self.root.to_string_lossy().into_owned()
+        self.main_root.to_string_lossy().into_owned()
+    }
+
+    pub fn is_linked_worktree(&self) -> bool {
+        self.main_root != self.root
+    }
+
+    /// The hold file, shared by every worktree's proxy.
+    pub fn proxy_hold_path(&self) -> PathBuf {
+        self.git
+            .common_path("sidetrack-proxy-hold")
+            .unwrap_or_else(|_| self.root.join(".git/sidetrack-proxy-hold"))
+    }
+
+    /// The address this checkout's proxy listens on. The main worktree uses
+    /// `routing.listen`; each linked worktree gets the next free port after it,
+    /// saved in its git dir so it never changes.
+    pub fn proxy_listen(&self) -> String {
+        let base = self.cfg.routing.listen_addr().to_string();
+        if !self.is_linked_worktree() {
+            return base;
+        }
+        let Ok(file) = self.git.git_path("sidetrack-proxy-listen") else {
+            return base;
+        };
+        if let Ok(saved) = std::fs::read_to_string(&file) {
+            if !saved.trim().is_empty() {
+                return saved.trim().to_string();
+            }
+        }
+        let Some((host, port)) = base.rsplit_once(':') else {
+            return base;
+        };
+        let Ok(port) = port.parse::<u16>() else {
+            return base;
+        };
+        let used: Vec<u16> = self
+            .git
+            .worktrees()
+            .unwrap_or_default()
+            .iter()
+            .filter_map(|(path, _)| Git::discover(path).ok())
+            .filter_map(|g| g.git_path("sidetrack-proxy-listen").ok())
+            .filter_map(|f| std::fs::read_to_string(f).ok())
+            .filter_map(|s| s.trim().rsplit_once(':')?.1.parse().ok())
+            .collect();
+        let mine = (1..1000u16)
+            .map(|k| port.saturating_add(k))
+            .find(|p| !used.contains(p))
+            .unwrap_or(port);
+        let addr = format!("{host}:{mine}");
+        let _ = std::fs::write(&file, format!("{addr}\n"));
+        addr
+    }
+
+    /// The database each *other* worktree's app uses: db name → worktree root.
+    pub fn active_elsewhere(&self) -> BTreeMap<String, String> {
+        let me = self.root.canonicalize().ok();
+        let mut out = BTreeMap::new();
+        for (path, _) in self.git.worktrees().unwrap_or_default() {
+            if path.canonicalize().ok() == me {
+                continue;
+            }
+            let Ok(g) = Git::discover(&path) else {
+                continue;
+            };
+            let db = if self.cfg.routing.is_proxy() {
+                let app_db = self.cfg.routing.database.clone().unwrap_or_default();
+                g.git_path("sidetrack-proxy-target")
+                    .ok()
+                    .map(|t| crate::proxy::read_target(&t, &app_db))
+            } else {
+                std::fs::read_to_string(path.join(&self.cfg.routing.file))
+                    .ok()
+                    .and_then(|c| envfile::get(&c, &self.cfg.routing.variable))
+                    .and_then(|v| envfile::db_name_in_value(&v))
+            };
+            if let Some(db) = db {
+                out.insert(db, path.display().to_string());
+            }
+        }
+        out
     }
 
     /// The registered project, or a hint to run `init`.
@@ -74,11 +167,7 @@ impl Workspace {
 
     /// Whether something accepts connections on the proxy's address.
     pub fn proxy_running(&self) -> bool {
-        let addr = self
-            .cfg
-            .routing
-            .listen_addr()
-            .replace("0.0.0.0", "127.0.0.1");
+        let addr = self.proxy_listen().replace("0.0.0.0", "127.0.0.1");
         addr.parse::<std::net::SocketAddr>().is_ok_and(|a| {
             std::net::TcpStream::connect_timeout(&a, std::time::Duration::from_millis(300)).is_ok()
         })
@@ -91,7 +180,7 @@ impl Workspace {
             return Ok(u.clone());
         }
         let port = self
-            .compose
+            .db_compose
             .port(&self.cfg.database.service, 5432)?
             .with_context(|| {
                 format!(
@@ -133,8 +222,13 @@ impl Workspace {
         );
         let project = self.project()?;
         let running_services = self.compose.running_services()?;
+        let db_services = if self.is_linked_worktree() {
+            self.db_compose.running_services()?
+        } else {
+            running_services.clone()
+        };
         anyhow::ensure!(
-            running_services.contains(&self.cfg.database.service),
+            db_services.contains(&self.cfg.database.service),
             "the {} service isn't running; start it with `docker compose up -d {}`",
             self.cfg.database.service,
             self.cfg.database.service
@@ -160,6 +254,7 @@ impl Workspace {
             env_file_tracked: !self.cfg.routing.is_proxy()
                 && self.git.is_tracked(&self.cfg.routing.file)?,
             proxy_running: self.cfg.routing.is_proxy().then(|| self.proxy_running()),
+            elsewhere: self.active_elsewhere(),
             disk: self.disk_space(),
             readings,
             version_table,
@@ -257,7 +352,7 @@ impl Workspace {
             return None;
         }
         let out = self
-            .compose
+            .db_compose
             .exec(
                 &self.cfg.database.service,
                 &[
@@ -307,6 +402,7 @@ impl Workspace {
             reg: &self.reg,
             project,
             proxy_target: self.proxy_target_path(),
+            proxy_hold: self.proxy_hold_path(),
         }
     }
 }

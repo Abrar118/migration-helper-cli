@@ -269,7 +269,7 @@ These are reasons for the architecture decisions below:
   - Later, approvals: the hook sends the plan to the running app over a local socket when there is no TTY.
   - This is why the core is a library, plans are serialisable, and the registry is global.
 - **More engines, in this order:** MySQL/MariaDB (InnoDB transportable tablespaces, needs a spike) → SQL Server (backup/restore for branches, native database snapshots for resets) → Oracle (pluggable database clone). The engine interface is extracted when MySQL lands, not before.
-- **Git worktrees:** several DB branches active at once. Needs proxy routing.
+- ✅ **Git worktrees:** several DB branches active at once. Built on proxy routing; see plan-v1.md, "Git worktrees".
 
 ## 8. Architecture
 

@@ -176,6 +176,48 @@ impl Git {
         })
     }
 
+    /// Absolute path of a file in the git dir shared by all worktrees.
+    pub fn common_path(&self, name: &str) -> Result<PathBuf> {
+        let dir = PathBuf::from(self.run(&[
+            "rev-parse",
+            "--path-format=absolute",
+            "--git-common-dir",
+        ])?);
+        Ok(dir.join(name))
+    }
+
+    /// The main worktree's root when this checkout is a linked worktree
+    /// (`git worktree add`); `None` in the main worktree.
+    pub fn main_worktree(&self) -> Result<Option<PathBuf>> {
+        let common = self.common_path("")?;
+        let own = self.git_path("")?;
+        if common.canonicalize().ok() == own.canonicalize().ok() {
+            return Ok(None);
+        }
+        // A bare repo has no main worktree to share.
+        Ok(common
+            .file_name()
+            .is_some_and(|n| n == ".git")
+            .then(|| common.parent().map(Path::to_path_buf))
+            .flatten())
+    }
+
+    /// Every worktree of this repo: (root, checked-out branch), main first.
+    pub fn worktrees(&self) -> Result<Vec<(PathBuf, Option<String>)>> {
+        let out = self.run(&["worktree", "list", "--porcelain"])?;
+        let mut list: Vec<(PathBuf, Option<String>)> = vec![];
+        for line in out.lines() {
+            if let Some(p) = line.strip_prefix("worktree ") {
+                list.push((PathBuf::from(p), None));
+            } else if let (Some(b), Some(last)) = (line.strip_prefix("branch "), list.last_mut()) {
+                last.1 = Some(b.trim_start_matches("refs/heads/").to_string());
+            } else if line == "bare" {
+                list.pop();
+            }
+        }
+        Ok(list)
+    }
+
     pub fn hooks_dir(&self) -> Result<PathBuf> {
         self.git_path("hooks")
     }
@@ -286,5 +328,49 @@ mod tests {
 
         git(&repo, &["checkout", "-q", "--detach"]);
         assert_eq!(repo.current_branch().unwrap(), None);
+    }
+
+    #[test]
+    fn worktrees() {
+        let (d, repo) = repo();
+        assert_eq!(repo.main_worktree().unwrap(), None);
+        let wt = d.path().join("wt");
+        git(
+            &repo,
+            &[
+                "worktree",
+                "add",
+                "-q",
+                "-b",
+                "feature/w",
+                wt.to_str().unwrap(),
+            ],
+        );
+        let linked = super::Git::discover(&wt).unwrap();
+        let main = repo.root().canonicalize().unwrap();
+        assert_eq!(
+            linked
+                .main_worktree()
+                .unwrap()
+                .unwrap()
+                .canonicalize()
+                .unwrap(),
+            main
+        );
+        assert_eq!(
+            linked.common_path("x").unwrap().canonicalize().ok(),
+            repo.git_path("x")
+                .unwrap()
+                .parent()
+                .unwrap()
+                .join("x")
+                .canonicalize()
+                .ok()
+        );
+        let list = linked.worktrees().unwrap();
+        assert_eq!(list.len(), 2);
+        assert_eq!(list[0].0.canonicalize().unwrap(), main);
+        assert_eq!(list[1].1.as_deref(), Some("feature/w"));
+        assert_ne!(linked.git_path("t").unwrap(), repo.git_path("t").unwrap());
     }
 }

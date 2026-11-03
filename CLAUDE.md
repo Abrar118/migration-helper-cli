@@ -103,6 +103,12 @@ Detection is a pure function of those models plus the repo files, so tests feed 
 - `sidetrack proxy --daemon` re-runs the binary in the background (pid and log in `.git/`); `--stop` kills it. `init --proxy` writes proxy-mode config (`RoutingConfig::use_proxy`).
 - Tests use a fake upstream (unit) and `tests/e2e/proxy.sh` (real Docker).
 
+### Git worktrees
+
+- `Workspace.main_root` is the main worktree. The registry key (`root_key`) and `db_compose` (database service, psql, port, df) use it. `compose` is this checkout's own, for app services.
+- Per worktree, under `git_path`: proxy target, pid, log, and `sidetrack-proxy-listen` (the next free port after `routing.listen`, saved once). The hold file is in the common git dir (`Workspace::proxy_hold_path`).
+- `World.elsewhere` (db → worktree) protects other worktrees' databases. `delete` and `rename` refuse them, `gc` keeps them, and copies hold or warn.
+
 ### Naming (`naming.rs`)
 
 - Git branch → `<sanitized>_db`. If that's over 63 bytes (the Postgres limit), or the name collides with another branch, it becomes `<truncated>_<6-hex sha256>_db`.
