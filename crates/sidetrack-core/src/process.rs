@@ -32,13 +32,15 @@ pub fn capture_opt(cmd: &mut Command) -> Result<Option<String>> {
     Ok(out.status.success().then(|| String::from_utf8_lossy(&out.stdout).into_owned()))
 }
 
-/// Run a user-supplied shell command (e.g. the migration command) with inherited output.
+/// Run a user-supplied shell command (e.g. the migration command). Its output goes
+/// to our stderr so machine-readable stdout (`--json`) stays clean.
 pub fn shell(command: &str, dir: &Path) -> Result<()> {
     let status = Command::new("sh")
         .arg("-c")
         .arg(command)
         .current_dir(dir)
         .stdin(Stdio::null())
+        .stdout(Stdio::from(std::io::stderr()))
         .status()
         .with_context(|| format!("could not start `{command}`"))?;
     if !status.success() {

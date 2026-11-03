@@ -132,6 +132,21 @@ impl Postgres {
         Ok(rows.into_iter().filter_map(|r| r.into_iter().next()).collect())
     }
 
+    /// Open sessions for every database, as `application_name` (or "unknown").
+    pub fn connections_by_db(&self) -> Result<std::collections::BTreeMap<String, Vec<String>>> {
+        let rows = self.query(
+            "SELECT datname, coalesce(nullif(application_name, ''), 'unknown') FROM pg_stat_activity \
+             WHERE datname IS NOT NULL AND pid <> pg_backend_pid()",
+        )?;
+        let mut out = std::collections::BTreeMap::<String, Vec<String>>::new();
+        for r in rows {
+            if let [db, app] = r.as_slice() {
+                out.entry(db.clone()).or_default().push(app.clone());
+            }
+        }
+        Ok(out)
+    }
+
     pub fn terminate_connections(&self, db: &str) -> Result<u32> {
         let n = self.scalar(&format!(
             "SELECT count(pg_terminate_backend(pid)) FROM pg_stat_activity \
