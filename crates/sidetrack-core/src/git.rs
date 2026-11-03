@@ -104,6 +104,62 @@ impl Git {
             .collect())
     }
 
+    /// Contents of many `rev:path` blobs in one `git cat-file --batch` call.
+    /// Missing blobs come back as `None`.
+    pub fn read_blobs(&self, specs: &[String]) -> Result<Vec<Option<String>>> {
+        use std::io::{Read, Write};
+        if specs.is_empty() {
+            return Ok(vec![]);
+        }
+        let mut child = self
+            .cmd()
+            .args(["cat-file", "--batch"])
+            .stdin(std::process::Stdio::piped())
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::null())
+            .spawn()
+            .context("starting git cat-file")?;
+        let mut stdin = child.stdin.take().context("git cat-file stdin")?;
+        let input = specs.join("\n") + "\n";
+        // Write from a thread so a large output can't deadlock against our input.
+        let writer = std::thread::spawn(move || stdin.write_all(input.as_bytes()));
+        let mut raw = Vec::new();
+        child
+            .stdout
+            .take()
+            .context("git cat-file stdout")?
+            .read_to_end(&mut raw)?;
+        writer
+            .join()
+            .map_err(|_| anyhow::anyhow!("git cat-file writer panicked"))??;
+        child.wait()?;
+
+        let mut out = Vec::with_capacity(specs.len());
+        let mut pos = 0;
+        for _ in specs {
+            let Some(nl) = raw[pos..].iter().position(|&b| b == b'\n') else {
+                break;
+            };
+            let header = String::from_utf8_lossy(&raw[pos..pos + nl]).into_owned();
+            pos += nl + 1;
+            let parts: Vec<&str> = header.split(' ').collect();
+            match parts.as_slice() {
+                [_, _, size] if !header.ends_with(" missing") => {
+                    let size: usize = size.parse().context("git cat-file size")?;
+                    out.push(Some(
+                        String::from_utf8_lossy(&raw[pos..pos + size]).into_owned(),
+                    ));
+                    pos += size + 1; // content + trailing newline
+                }
+                _ => out.push(None),
+            }
+        }
+        while out.len() < specs.len() {
+            out.push(None);
+        }
+        Ok(out)
+    }
+
     pub fn is_tracked(&self, path: &str) -> Result<bool> {
         Ok(self
             .run_opt(&["ls-files", "--error-unmatch", "--", path])?
@@ -218,6 +274,15 @@ mod tests {
             .unwrap()
             .contains(&"main".to_string()));
         assert!(repo.operation_in_progress().unwrap().is_none());
+
+        let blobs = repo
+            .read_blobs(&[
+                "HEAD:migrations/002_b.sql".into(),
+                "main:migrations/002_b.sql".into(),
+                "main:migrations/001_a.sql".into(),
+            ])
+            .unwrap();
+        assert_eq!(blobs, [Some("b".to_string()), None, Some("a".to_string())]);
 
         git(&repo, &["checkout", "-q", "--detach"]);
         assert_eq!(repo.current_branch().unwrap(), None);

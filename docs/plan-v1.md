@@ -83,6 +83,20 @@ Decisions:
 15. **The schema summary is best effort.** It's attached after planning (the planner stays pure), only for switches to an existing DB branch, and silently skipped if a query fails.
 16. **Renaming an adopted database keeps its name**; only the git link moves. Other DB branches get the new branch's name.
 
+## Version-table readers
+
+sidetrack used to infer a database's migrations from its own records plus git. That was cautious enough to be safe, but it went wrong in one common case. When `main` gained a migration in git that the local `app_dev` never ran, branches from an older `main` couldn't reuse `app_dev` and were built from empty.
+
+Readers ask the database instead (`readers.rs`, `Workspace::read_migrations`):
+- **One psql session reads every connectable DB branch.** It's a script on stdin: `\connect`, then `\gset` / `\if` so the table is only queried where it exists.
+- **Rows are mapped to migration file keys** using a catalog of files from the working tree and every local branch.
+- **Alembic stores only head revisions**, so the catalog also holds each file's `revision` / `down_revision`, read in one `git cat-file --batch` call. Applied = the heads and all their ancestors.
+- **Rows that match no known file are "unknown".** They make that database incompatible with every branch, and show in warnings and `status`.
+- **Django rows for apps without a migrations folder in the repo** (`auth`, `admin`, …) are ignored.
+- **A reader failure never blocks planning.** sidetrack falls back to its records and `status` says why.
+
+`tests/e2e/alembic.sh` checks this with real `alembic revision` files.
+
 ## Test strategy
 
 - **Unit tests:** naming, envfile, config round-trip, compose JSON parsing, detection on fixture directories, file-set logic, planner (pure inputs).

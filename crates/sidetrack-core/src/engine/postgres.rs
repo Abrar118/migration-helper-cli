@@ -100,6 +100,77 @@ impl Postgres {
             .with_context(|| format!("no result for `{sql}`"))
     }
 
+    /// Rows of a migration tool's version table, for several databases in one psql
+    /// session. `None` for a database means the table doesn't exist there (nothing
+    /// applied yet). Databases that refuse connections (frozen snapshots) must not
+    /// be passed: a failed `\connect` ends the session.
+    pub fn version_rows(
+        &self,
+        dbs: &[String],
+        table: &str,
+        query: &str,
+    ) -> Result<std::collections::BTreeMap<String, Option<Vec<String>>>> {
+        let mut out = std::collections::BTreeMap::new();
+        if dbs.is_empty() {
+            return Ok(out);
+        }
+        let (prog, args) = self.argv.split_first().context("empty psql command")?;
+        let mut cmd = Command::new(prog);
+        cmd.args(args);
+        if let Some(d) = &self.dir {
+            cmd.current_dir(d);
+        }
+        // A psql script: only query the table where it exists (`\gset` + `\if`, psql 10+).
+        cmd.args([
+            "-X",
+            "-q",
+            "-A",
+            "-t",
+            "-v",
+            "ON_ERROR_STOP=1",
+            "-d",
+            MAINTENANCE_DB,
+        ]);
+        cmd.arg("-F").arg(SEP.to_string());
+        cmd.args(["-f", "-"]);
+        let mut script = String::new();
+        for db in dbs {
+            script.push_str(&format!(
+                "\\connect {db}\n\
+                 SELECT '@db', current_database();\n\
+                 SELECT to_regclass({table}) IS NOT NULL AS st_has \\gset\n\
+                 \\if :st_has\n\
+                 SELECT '@has', 't';\n\
+                 SELECT '@row', q.* FROM ({query}) q;\n\
+                 \\else\n\
+                 SELECT '@has', 'f';\n\
+                 \\endif\n",
+                db = quote_ident(db),
+                table = quote_literal(table),
+            ));
+        }
+        let text = crate::process::capture_with_input(&mut cmd, &script)?;
+        let mut current: Option<String> = None;
+        for line in text.lines() {
+            let mut parts = line.splitn(2, SEP);
+            match (parts.next(), parts.next()) {
+                (Some("@db"), Some(name)) => current = Some(name.to_string()),
+                (Some("@has"), Some(has)) => {
+                    if let Some(db) = &current {
+                        out.insert(db.clone(), (has == "t").then(Vec::new));
+                    }
+                }
+                (Some("@row"), Some(row)) => {
+                    if let Some(Some(rows)) = current.as_ref().and_then(|db| out.get_mut(db)) {
+                        rows.push(row.to_string());
+                    }
+                }
+                _ => {}
+            }
+        }
+        Ok(out)
+    }
+
     /// Tables and columns of `db` (user schemas only).
     pub fn schema(&self, db: &str) -> Result<crate::schema::Schema> {
         let rows = self.query_in(
@@ -373,6 +444,33 @@ mod tests {
         for d in [a, b, "st_test_renamed_db"] {
             pg.drop_database(d).unwrap();
             assert!(!pg.exists(d).unwrap());
+        }
+    }
+
+    #[test]
+    fn version_rows_across_databases() {
+        let Some(pg) = test_pg() else {
+            eprintln!("skipped: SIDETRACK_TEST_PG not set");
+            return;
+        };
+        let (with, without) = ("st_test_versions_db", "st_test_noversions_db");
+        for d in [with, without] {
+            pg.drop_database(d).unwrap();
+            pg.create_empty(d).unwrap();
+        }
+        pg.execute_in(with, "CREATE TABLE alembic_version (version_num varchar(32)); INSERT INTO alembic_version VALUES ('b2'), ('c3')")
+            .unwrap();
+        let rows = pg
+            .version_rows(
+                &[with.to_string(), without.to_string()],
+                "alembic_version",
+                "SELECT (version_num)::text FROM \"alembic_version\"",
+            )
+            .unwrap();
+        assert_eq!(rows[with], Some(vec!["b2".to_string(), "c3".to_string()]));
+        assert_eq!(rows[without], None);
+        for d in [with, without] {
+            pg.drop_database(d).unwrap();
         }
     }
 }

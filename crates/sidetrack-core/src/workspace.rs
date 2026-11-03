@@ -1,5 +1,6 @@
 //! One repo's sidetrack setup: config, git, compose, engine and registry together.
 
+use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
@@ -7,12 +8,14 @@ use anyhow::{Context, Result};
 use crate::apply::Applier;
 use crate::compose::{docker_available, Compose};
 use crate::config::Config;
-use crate::engine::postgres::Postgres;
+use crate::engine::postgres::{DbInfo, Postgres};
 use crate::envfile;
 use crate::git::Git;
+use crate::migrations;
 use crate::plan::{Plan, PlanKind, Step};
 use crate::planner::{DiskSpace, Planner, World};
-use crate::registry::{self, Project, Registry};
+use crate::readers::{self, Catalog, Reading};
+use crate::registry::{self, DbBranch, Project, Registry};
 use crate::schema;
 
 pub struct Workspace {
@@ -88,23 +91,113 @@ impl Workspace {
             self.cfg.database.service,
             self.cfg.database.service
         );
-        let server_dbs = self
+        let server_dbs: BTreeMap<String, DbInfo> = self
             .pg
             .list_databases()?
             .into_iter()
             .map(|d| (d.name.clone(), d))
             .collect();
+        let branches = self.reg.branches(project.id)?;
+        let (readings, version_table, reader_error) =
+            match self.read_migrations(&branches, &server_dbs) {
+                Ok(Some((table, r))) => (r, Some(table), None),
+                Ok(None) => (Default::default(), None, None),
+                Err(e) => (Default::default(), None, Some(format!("{e:#}"))),
+            };
         Ok(World {
-            branches: self.reg.branches(project.id)?,
+            branches,
             snapshots: self.reg.snapshots(project.id)?,
             connections: self.pg.connections_by_db()?,
             active_db: self.active_db()?,
             env_file_tracked: self.git.is_tracked(&self.cfg.routing.file)?,
             disk: self.disk_space(),
+            readings,
+            version_table,
+            reader_error,
             server_dbs,
             running_services,
             project,
         })
+    }
+
+    /// Read each connectable DB branch's version table (one psql session) and map
+    /// the rows to migration files. `None` when the tool has no version table.
+    pub fn read_migrations(
+        &self,
+        branches: &[DbBranch],
+        server_dbs: &BTreeMap<String, DbInfo>,
+    ) -> Result<Option<(String, BTreeMap<String, Reading>)>> {
+        let Some(reader) = readers::reader_for(&self.cfg.migrations) else {
+            return Ok(None);
+        };
+        let dbs: Vec<String> = branches
+            .iter()
+            .filter(|b| {
+                server_dbs
+                    .get(&b.db_name)
+                    .is_some_and(|d| d.allow_connections)
+            })
+            .map(|b| b.db_name.clone())
+            .collect();
+        let catalog = self.catalog(reader.kind == readers::Kind::AlembicHeads)?;
+        let rows = self.pg.version_rows(&dbs, &reader.table, &reader.query)?;
+        let readings = rows
+            .into_iter()
+            .map(|(db, rows)| {
+                let reading = match rows {
+                    Some(rows) => reader.interpret(&rows, &catalog),
+                    None => Reading::default(), // no version table yet: nothing applied
+                };
+                (db, reading)
+            })
+            .collect();
+        Ok(Some((reader.table, readings)))
+    }
+
+    /// Migration files across the working tree and every local branch, plus the
+    /// Alembic revision chain when asked for.
+    pub fn catalog(&self, alembic: bool) -> Result<Catalog> {
+        let dirs = &self.cfg.migrations.dirs;
+        // key → where to read it from (None = the working tree)
+        let mut sources: BTreeMap<String, Option<String>> = BTreeMap::new();
+        for key in migrations::files_in_worktree(&self.root, dirs)? {
+            sources.insert(key, None);
+        }
+        let mut revs = vec!["HEAD".to_string()];
+        revs.extend(self.git.local_branches()?);
+        for rev in revs {
+            for key in migrations::files_at(&self.git, &rev, dirs)? {
+                sources.entry(key).or_insert_with(|| Some(rev.clone()));
+            }
+        }
+        let mut catalog = Catalog {
+            files: sources.keys().cloned().collect(),
+            ..Default::default()
+        };
+        if alembic {
+            let keys: Vec<&String> = sources.keys().filter(|k| k.ends_with(".py")).collect();
+            let from_git: Vec<(usize, String)> = keys
+                .iter()
+                .enumerate()
+                .filter_map(|(i, k)| sources[*k].as_ref().map(|rev| (i, format!("{rev}:{k}"))))
+                .collect();
+            let specs: Vec<String> = from_git.iter().map(|(_, s)| s.clone()).collect();
+            let blobs = self.git.read_blobs(&specs)?;
+            let mut contents: Vec<Option<String>> = vec![None; keys.len()];
+            for ((i, _), blob) in from_git.into_iter().zip(blobs) {
+                contents[i] = blob;
+            }
+            for (i, key) in keys.iter().enumerate() {
+                let text = match &contents[i] {
+                    Some(t) => Some(t.clone()),
+                    None => std::fs::read_to_string(self.root.join(key)).ok(),
+                };
+                if let Some((rev, downs)) = text.as_deref().and_then(readers::parse_alembic) {
+                    catalog.alembic.insert(rev, ((*key).clone(), downs));
+                }
+            }
+        }
+        Ok(catalog)
     }
 
     /// Free and total space where the database container keeps its data.

@@ -112,6 +112,18 @@ grep -q "copy of app_dev" "$work/plan.txt" || fail "feature/c should start from 
 "$st" switch --yes
 [ "$(sql feature_c_db "SELECT count(*) FROM schema_migrations")" = 2 ] || fail "feature_c_db should have 001 + 004"
 
+step "an older branch reuses a database that's behind its git branch"
+# main now has 004 in git, but app_dev never ran it. Its version table says so,
+# so a branch from before 004 can start from app_dev instead of from empty.
+git checkout -q -b feature/old main~1
+"$st" switch --yes --dry-run | tee "$work/plan_old.txt"
+grep -q "copy of app_dev" "$work/plan_old.txt" || fail "feature/old should start from app_dev"
+grep -q "per schema_migrations" "$work/plan_old.txt" || fail "the plan should say it read schema_migrations"
+"$st" switch --yes >/dev/null
+"$st" status | tee "$work/status_old.txt"
+grep -q "Migrations:  1 applied in feature_old_db (per schema_migrations) · 0 pending · 0 unknown" "$work/status_old.txt" \
+  || fail "status should report migrations read from the version table"
+
 step "list"
 "$st" list
 

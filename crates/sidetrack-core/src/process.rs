@@ -25,6 +25,30 @@ pub fn capture(cmd: &mut Command) -> Result<String> {
     Ok(String::from_utf8_lossy(&out.stdout).into_owned())
 }
 
+/// Like `capture`, feeding `input` on stdin.
+pub fn capture_with_input(cmd: &mut Command, input: &str) -> Result<String> {
+    use std::io::Write;
+    let shown = display(cmd);
+    let mut child = cmd
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .with_context(|| format!("could not start `{shown}`"))?;
+    let mut stdin = child.stdin.take().context("stdin")?;
+    let input = input.to_string();
+    let writer = std::thread::spawn(move || stdin.write_all(input.as_bytes()));
+    let out = child.wait_with_output()?;
+    writer
+        .join()
+        .map_err(|_| anyhow::anyhow!("stdin writer panicked"))??;
+    if !out.status.success() {
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        bail!("`{shown}` failed ({}): {}", out.status, stderr.trim());
+    }
+    Ok(String::from_utf8_lossy(&out.stdout).into_owned())
+}
+
 /// Run and capture stdout, or `None` on a non-zero exit.
 pub fn capture_opt(cmd: &mut Command) -> Result<Option<String>> {
     let shown = display(cmd);

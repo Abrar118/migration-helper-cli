@@ -8,6 +8,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 - `docs/spec-v1.md` is the product spec. Requirement IDs like `P0.6` are referenced from code comments.
 - `docs/plan-v1.md` is the build plan, plus a "Decisions" list. Read it before changing behaviour: several rules there exist because of bugs.
+- `docs/handoff.md` is the current state and what to do next (the v2 local proxy design). Start there when resuming work.
 
 ## Commands
 
@@ -24,6 +25,7 @@ SIDETRACK_TEST_PG="docker exec -i st-pg psql -U postgres" cargo test
 
 # Full scenario in Docker (builds the binary, makes a temp repo from tests/e2e/fixture):
 tests/e2e/run.sh
+tests/e2e/alembic.sh   # real Alembic; needs `pip install alembic "psycopg[binary]"`
 
 # Running the CLI by hand against some project:
 SIDETRACK_REGISTRY=/tmp/st.sqlite cargo run -p sidetrack -- -C /path/to/project status
@@ -61,6 +63,14 @@ Each `Candidate` has two sets. **Keep them separate:**
 - `applied` ("known applied": recorded only) decides which migrations to list as pending.
 
 Merging the two once caused needed migrations to be skipped (plan decision 9).
+
+### Version-table readers (`readers.rs`)
+
+When the migration tool has a version table (`alembic_version`, `django_migrations`, …, or `migrations.version_table`), `World.readings` holds what each DB branch really has applied, and `Planner::db_state` prefers it over the registry's records. Unknown rows become `?unknown/<row>` entries in the "may contain" set, so that database is never compatible.
+
+- **Alembic** keeps only heads. The `Catalog` maps revision → (file, down revisions), parsed from files across all local branches.
+- **`Postgres::version_rows`** feeds psql a script on stdin (`\connect` / `\gset` / `\if`) rather than `-c`, so a missing table isn't an error.
+- **Frozen snapshots** refuse connections, so they're never read.
 
 ### Postgres engine (`engine/postgres.rs`)
 

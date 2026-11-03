@@ -256,7 +256,7 @@ Global flags: `--dry-run`, `--json`, `--yes`.
 - ✅ `sidetrack rename` that mirrors `git branch -m` (v1.1).
 - ✅ Snapshot retention policy (v1.1): `[snapshots] keep = N`, applied by `gc`; labelled snapshots are kept.
 - ✅ `sidetrack bench` (v1.1, added): times a real copy on this machine for the §10 spike.
-- First-class Django / Flyway / Prisma / Rails readers that can also check the DB's recorded migration version against the files (drift detection beyond file sets).
+- ✅ Version-table readers (added after v1.1): Alembic (heads + `down_revision` chain), Django, Flyway, Rails, Prisma, Knex, or any table via `version_table` / `version_column`. A database's real applied set replaces sidetrack's records for base selection, pending migrations, warnings and `status`.
 - Clone-capability probe that tells the user how to get instant clones (PG 18 on btrfs/XFS/APFS).
 
 ### P2 — design for, don't build
