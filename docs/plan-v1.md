@@ -97,6 +97,27 @@ Readers ask the database instead (`readers.rs`, `Workspace::read_migrations`):
 
 `tests/e2e/alembic.sh` checks this with real `alembic revision` files.
 
+## Local proxy (v2)
+
+`routing.mode = "proxy"` routes the app through `sidetrack proxy` instead of rewriting an env file (`proxy.rs`).
+- **The target** (the active DB branch) is one line in `.git/sidetrack-proxy-target`. `switch` writes it with the `SetProxyTarget` step. If the file is missing, the target is `routing.database` itself. In proxy mode, `Workspace::active_db` reads this file, not the env file.
+- **The proxy** uses std threads and blocking sockets, with no async runtime.
+  - It answers SSL/GSS encryption requests with "no" and reads the startup message.
+  - If `database` equals `routing.database`, it swaps in the target.
+  - It then relays bytes both ways. Authentication passes through untouched.
+  - Cancel requests are forwarded as they are.
+- **Moving open connections:** a watcher polls the target file every 250 ms. When the target changes, it closes the app's connections to the old database, so connection pools reconnect to the new one. Connections to any other database name are never touched.
+- **Upstream** is `routing.upstream`, or else the port compose publishes for the database service (`docker compose port db 5432`).
+
+Decisions:
+
+17. **The target lives in a file under `.git`, not in the registry.** The proxy re-reads it for each connection with no SQLite locking, it's per checkout, and it is never committed.
+18. **Copying the active database still stops the app.** `CREATE DATABASE … TEMPLATE` needs no connections to the source, and an app's connection pool would reconnect through the proxy straight away. Only services stopped for a copy are started again. A plain switch needs no restart.
+19. **No TLS between app and proxy.** It's local traffic. Clients with `sslmode=require` fail, and the docs say to use `prefer` or `disable`.
+20. **Plans warn when the proxy isn't running** (`World.proxy_running`). They don't refuse, because the target can be set before the proxy starts.
+
+`tests/e2e/proxy.sh` covers it all against real Docker. The app container reaches the host proxy via `host.docker.internal` (`extra_hosts: host-gateway` on Linux).
+
 ## Test strategy
 
 - **Unit tests:** naming, envfile, config round-trip, compose JSON parsing, detection on fixture directories, file-set logic, planner (pure inputs).

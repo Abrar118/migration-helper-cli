@@ -32,6 +32,9 @@ pub struct World {
     /// Disk space where the database container keeps its data, if known.
     #[serde(default)]
     pub disk: Option<DiskSpace>,
+    /// Proxy mode: whether the proxy is accepting connections. `None` in env mode.
+    #[serde(default)]
+    pub proxy_running: Option<bool>,
     /// What each database's version table says (only for tools with a reader).
     /// When present, it replaces sidetrack's own records as the truth.
     #[serde(default)]
@@ -127,6 +130,9 @@ impl<'a> Planner<'a> {
 
     fn active(&self) -> Result<&'a str> {
         self.world.active_db.as_deref().with_context(|| {
+            if self.cfg.routing.is_proxy() {
+                return "can't tell which database the proxy points at".to_string();
+            }
             format!(
                 "can't read the active database from {} in {}",
                 self.cfg.routing.variable, self.cfg.routing.file
@@ -146,7 +152,7 @@ impl<'a> Planner<'a> {
     }
 
     fn ensure_env_writable(&self) -> Result<()> {
-        if self.world.env_file_tracked {
+        if !self.cfg.routing.is_proxy() && self.world.env_file_tracked {
             bail!(
                 "{} is tracked by git, so sidetrack won't rewrite it (the DB name would end up in commits). \
                  Move {} into an untracked env file and update routing.file in sidetrack.toml.",
@@ -419,7 +425,13 @@ impl<'a> Planner<'a> {
                     self.ensure_env_writable()?;
                     plan.summary =
                         format!("Switch DB from {active} to {} for {git_branch}", b.db_name);
-                    self.push_route(&mut plan, &active, &b.db_name, &self.running_app_services());
+                    // The proxy needs no restart; env mode recreates the app.
+                    let restart = if self.cfg.routing.is_proxy() {
+                        vec![]
+                    } else {
+                        self.running_app_services()
+                    };
+                    self.push_route(&mut plan, &active, &b.db_name, &restart);
                     if !pending.is_empty() {
                         self.push_migrations(&mut plan, &b.db_name, pending, &target);
                     }
@@ -449,15 +461,23 @@ impl<'a> Planner<'a> {
         self.guard_disk(plan)
     }
 
-    /// Point the app at `to` and recreate the running app services.
+    /// Point the app at `to`, then start `services` (env mode: the running app
+    /// services; proxy mode: only those stopped for a copy).
     fn push_route(&self, plan: &mut Plan, from: &str, to: &str, services: &[String]) {
-        plan.push(Step::RewriteEnv {
-            file: self.cfg.routing.file.clone(),
-            variable: self.cfg.routing.variable.clone(),
-            from_db: from.to_string(),
-            to_db: to.to_string(),
-        });
-        if services.is_empty() {
+        plan.push(self.route_step(from, to));
+        if self.cfg.routing.is_proxy() {
+            if self.world.proxy_running == Some(false) {
+                plan.warnings.push(
+                    "the proxy isn't running, so the app can't reach any database; start it with `sidetrack proxy`"
+                        .to_string(),
+                );
+            }
+            if !services.is_empty() {
+                plan.push(Step::StartServices {
+                    services: services.to_vec(),
+                });
+            }
+        } else if services.is_empty() {
             plan.notes.push(format!(
                 "none of {} is running; start them yourself to use the new database",
                 self.cfg.routing.restart.join(", ")
@@ -466,6 +486,23 @@ impl<'a> Planner<'a> {
             plan.push(Step::StartServices {
                 services: services.to_vec(),
             });
+        }
+    }
+
+    fn route_step(&self, from: &str, to: &str) -> Step {
+        if self.cfg.routing.is_proxy() {
+            Step::SetProxyTarget {
+                database: self.cfg.routing.database.clone().unwrap_or_default(),
+                from_db: from.to_string(),
+                to_db: to.to_string(),
+            }
+        } else {
+            Step::RewriteEnv {
+                file: self.cfg.routing.file.clone(),
+                variable: self.cfg.routing.variable.clone(),
+                from_db: from.to_string(),
+                to_db: to.to_string(),
+            }
         }
     }
 
@@ -513,11 +550,13 @@ impl<'a> Planner<'a> {
             None
         };
         let running = self.running_app_services();
+        let mut stopped = false;
 
         let applied = match &base {
             Some(base) => {
                 plan.notes.push(base.why.clone());
                 let stop = base.db_name == active && !running.is_empty();
+                stopped = stop;
                 if stop {
                     plan.push(Step::StopServices {
                         services: running.clone(),
@@ -565,7 +604,12 @@ impl<'a> Planner<'a> {
         };
 
         if switch_to {
-            self.push_route(plan, active, name, &running);
+            let restart = if self.cfg.routing.is_proxy() && !stopped {
+                vec![]
+            } else {
+                running
+            };
+            self.push_route(plan, active, name, &restart);
             let pending = migrations::pending(target, &applied);
             if !pending.is_empty() {
                 self.push_migrations(plan, name, pending, target);
@@ -1046,12 +1090,7 @@ impl<'a> Planner<'a> {
                 to: new_db.clone(),
             });
             if active {
-                plan.push(Step::RewriteEnv {
-                    file: self.cfg.routing.file.clone(),
-                    variable: self.cfg.routing.variable.clone(),
-                    from_db: b.db_name.clone(),
-                    to_db: new_db.clone(),
-                });
+                plan.push(self.route_step(&b.db_name, &new_db));
                 if !running.is_empty() {
                     plan.push(Step::StartServices { services: running });
                 }
@@ -1127,6 +1166,9 @@ mod tests {
                 file: ".env".into(),
                 variable: "DATABASE_URL".into(),
                 restart: vec!["api".into()],
+                database: None,
+                listen: None,
+                upstream: None,
             },
             migrations: MigrationsConfig {
                 tool: "generic".into(),
@@ -1194,6 +1236,7 @@ mod tests {
             running_services: vec!["api".into()],
             env_file_tracked: false,
             disk: None,
+            proxy_running: None,
             readings: BTreeMap::new(),
             version_table: None,
             reader_error: None,
@@ -1212,6 +1255,7 @@ mod tests {
                 Step::DropDatabase { .. } => "drop",
                 Step::RenameDatabase { .. } => "rename",
                 Step::RewriteEnv { .. } => "env",
+                Step::SetProxyTarget { .. } => "proxy",
                 Step::StartServices { .. } => "start",
                 Step::RunMigrations { .. } => "migrate",
                 Step::RunSeed { .. } => "seed",
@@ -1228,6 +1272,62 @@ mod tests {
     }
 
     /// Spec §1: A has 2 migrations, B adds 4 more. Returning to A just switches back.
+    fn proxy_cfg() -> Config {
+        let mut c = cfg();
+        c.routing.mode = "proxy".into();
+        c.routing.database = Some("app_dev".into());
+        c
+    }
+
+    #[test]
+    fn proxy_switch_needs_no_restart() {
+        let (_d, repo) = repo();
+        git(&repo, &["checkout", "-q", "-b", "a"]);
+        commit_file(&repo, "migrations/001.sql", "1");
+        let mut w = world(
+            vec![
+                branch(1, "a", "a_db", &["001.sql"], 1),
+                branch(2, "b", "b_db", &["001.sql"], 2),
+            ],
+            "b_db",
+        );
+        w.env_file_tracked = true; // irrelevant in proxy mode
+        w.proxy_running = Some(true);
+        let c = proxy_cfg();
+        let plan = Planner::new(&c, &repo, &w).switch("a").unwrap();
+        assert_eq!(kinds(&plan), ["proxy", "touch"]);
+        assert!(plan.warnings.is_empty(), "{:?}", plan.warnings);
+        assert_eq!(
+            plan.steps[0].describe(),
+            "Route app_dev through the proxy to a_db (was b_db)"
+        );
+
+        w.proxy_running = Some(false);
+        let plan = Planner::new(&c, &repo, &w).switch("a").unwrap();
+        assert!(plan
+            .warnings
+            .iter()
+            .any(|x| x.contains("`sidetrack proxy`")));
+    }
+
+    #[test]
+    fn proxy_copy_of_active_db_restarts_only_stopped_services() {
+        let (_d, repo) = repo();
+        commit_file(&repo, "migrations/001.sql", "1");
+        git(&repo, &["checkout", "-q", "-b", "c"]);
+        let w = world(
+            vec![branch(1, "main", "main_db", &["001.sql"], 1)],
+            "main_db",
+        );
+        let c = proxy_cfg();
+        let plan = Planner::new(&c, &repo, &w).switch("c").unwrap();
+        let k = kinds(&plan);
+        assert_eq!(k[0], "stop", "{k:?}");
+        let proxy = k.iter().position(|s| *s == "proxy").unwrap();
+        assert_eq!(k[proxy + 1], "start", "{k:?}");
+        assert!(!k.contains(&"env"));
+    }
+
     #[test]
     fn spec_scenario_switch_back_runs_nothing() {
         let (_d, repo) = repo();

@@ -25,6 +25,8 @@ pub struct Applier<'a> {
     pub pg: &'a Postgres,
     pub reg: &'a Registry,
     pub project: &'a Project,
+    /// File the proxy reads the active DB branch from (proxy mode).
+    pub proxy_target: PathBuf,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
@@ -305,6 +307,26 @@ impl Applier<'_> {
                 std::fs::write(&path, updated)?;
                 (Undo::RestoreEnv { path, content }, None)
             }
+            Step::SetProxyTarget {
+                database,
+                from_db,
+                to_db,
+            } => {
+                let current = crate::proxy::read_target(&self.proxy_target, database);
+                if &current != from_db {
+                    bail!(
+                        "the proxy target changed since the plan was made (expected {from_db}, found {current})"
+                    );
+                }
+                crate::proxy::write_target(&self.proxy_target, to_db)?;
+                (
+                    Undo::RestoreEnv {
+                        path: self.proxy_target.clone(),
+                        content: format!("{from_db}\n"),
+                    },
+                    None,
+                )
+            }
             Step::StartServices { services } => {
                 self.compose.recreate(services)?;
                 (Undo::Nothing, None)
@@ -467,6 +489,7 @@ mod tests {
             pg: &pg,
             reg: &reg,
             project: &project,
+            proxy_target: dir.path().join("proxy-target"),
         };
 
         pg.drop_database("st_apply_src_db").unwrap();

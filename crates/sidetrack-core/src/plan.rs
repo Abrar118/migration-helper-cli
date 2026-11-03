@@ -90,6 +90,12 @@ pub enum Step {
         from_db: String,
         to_db: String,
     },
+    /// Proxy mode: send the app's connections for `database` to `to_db`.
+    SetProxyTarget {
+        database: String,
+        from_db: String,
+        to_db: String,
+    },
     /// Recreate services so they pick up the env file.
     StartServices {
         services: Vec<String>,
@@ -192,6 +198,11 @@ impl Step {
             } => {
                 format!("Point {variable} in {file} at {to_db} (was {from_db})")
             }
+            Step::SetProxyTarget {
+                database,
+                from_db,
+                to_db,
+            } => format!("Route {database} through the proxy to {to_db} (was {from_db})"),
             Step::StartServices { services } => format!("Recreate {}", services.join(", ")),
             Step::RunMigrations { command, pending } => {
                 let n = pending.len();
