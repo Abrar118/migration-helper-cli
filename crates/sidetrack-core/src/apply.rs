@@ -81,6 +81,7 @@ enum Undo {
         to: String,
     },
     StartServices(Vec<String>),
+    RemoveFile(PathBuf),
     DeleteBranchRow(i64),
     DeleteSnapshotRow(i64),
     RestoreFiles {
@@ -212,6 +213,7 @@ impl Applier<'_> {
                     restart = Some(s);
                     Ok(())
                 }
+                Undo::RemoveFile(path) => crate::proxy::release_hold(&path).map_err(Into::into),
                 Undo::DeleteBranchRow(id) => self.reg.delete_branch(id),
                 Undo::DeleteSnapshotRow(id) => self.reg.delete_snapshot(id),
                 Undo::RestoreFiles { branch_id, files } => {
@@ -306,6 +308,15 @@ impl Applier<'_> {
                 let (updated, _) = envfile::set_db_name(&content, variable, to_db)?;
                 std::fs::write(&path, updated)?;
                 (Undo::RestoreEnv { path, content }, None)
+            }
+            Step::HoldConnections { db } => {
+                let path = crate::proxy::hold_path(&self.proxy_target);
+                crate::proxy::write_hold(&path, db, std::time::Duration::from_secs(600))?;
+                (Undo::RemoveFile(path), None)
+            }
+            Step::ReleaseConnections { .. } => {
+                crate::proxy::release_hold(&crate::proxy::hold_path(&self.proxy_target))?;
+                (Undo::Nothing, None)
             }
             Step::SetProxyTarget {
                 database,

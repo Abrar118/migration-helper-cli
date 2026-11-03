@@ -75,11 +75,22 @@ pub fn detect(root: &Path, compose_dir: &Path, views: &ComposeViews) -> Result<D
     let mut notes = vec![];
 
     // ---- database service
-    let dbs: Vec<(&String, &Service)> = resolved
+    let mut dbs: Vec<(&String, &Service)> = resolved
         .services
         .iter()
         .filter(|(_, s)| s.image.as_deref().is_some_and(is_postgres_image))
         .collect();
+    // Several services can use a Postgres image (e.g. one only for its psql). The
+    // server is the one configured like a server and that others depend on.
+    let score = |name: &str, s: &Service| {
+        let configured = s.environment.keys().any(|k| k.starts_with("POSTGRES_"));
+        let depended_on = resolved
+            .services
+            .values()
+            .any(|o| o.depends_on().iter().any(|d| d == name));
+        2 * configured as u8 + depended_on as u8
+    };
+    dbs.sort_by_key(|(n, s)| std::cmp::Reverse(score(n, s)));
     let (db_service, db) = match dbs.as_slice() {
         [] => bail!("no Postgres service found in the compose config (looked for images named {POSTGRES_IMAGES:?})"),
         [one] => *one,
@@ -612,6 +623,7 @@ impl Detection {
                 database: None,
                 listen: None,
                 upstream: None,
+                autostart: None,
             },
             migrations: MigrationsConfig {
                 tool: self.migrations.tool.clone(),
@@ -819,6 +831,31 @@ mod tests {
         assert_eq!(m.dirs, ["shop/migrations", "users/migrations"]);
         assert_eq!(m.command.as_deref(), Some("python manage.py migrate"));
         assert!(!notes.is_empty(), "notes that it runs on the host");
+    }
+
+    #[test]
+    fn picks_the_configured_postgres_among_several() {
+        let dir = tempfile::tempdir().unwrap();
+        write(dir.path(), "migrations/001.sql", "");
+        // "api" also uses the postgres image (for psql), and sorts first by name.
+        let resolved = model(
+            r#"{"name":"x","services":{
+            "api":{"image":"postgres:16-alpine","depends_on":["db"],
+                   "environment":{"DATABASE_URL":"postgres://app@db:5432/app_dev"}},
+            "db":{"image":"postgres:16-alpine","environment":{"POSTGRES_USER":"app","POSTGRES_DB":"app_dev"}}}}"#,
+        );
+        let views = ComposeViews {
+            resolved: resolved.clone(),
+            env_files: resolved.clone(),
+            raw: resolved,
+        };
+        let d = detect(dir.path(), dir.path(), &views).unwrap();
+        assert_eq!(d.db_service, "db");
+        assert!(
+            d.notes.iter().any(|n| n.contains("using db")),
+            "{:?}",
+            d.notes
+        );
     }
 
     #[test]

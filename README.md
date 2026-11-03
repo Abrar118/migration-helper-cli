@@ -140,7 +140,8 @@ services:
 ```
 
 - **Setting it up:** `sidetrack init --proxy` writes this config for you. It reads the app's database name from your env file, then tells you what to change in the app's URL (that's a one-time edit).
-- **Running it:** start the proxy with `sidetrack proxy --daemon` (or `sidetrack proxy` in its own terminal), and stop it with `sidetrack proxy --stop`. A switch then only changes where `app_dev` goes. The proxy closes the app's open connections to the old database, so its connection pool reconnects to the new one.
+- **Running it:** sidetrack starts the proxy in the background when a command or the git hook needs it (`autostart = false` turns that off). You can also start it with `sidetrack proxy --daemon`, or run `sidetrack proxy` in its own terminal. Stop it with `sidetrack proxy --stop`.
+- **No restarts, even for copies:** while the proxy is running, copying the database the app is using doesn't stop the app. The proxy holds the app's new connections for the few seconds the copy takes, then lets them through to the new database. A switch then only changes where `app_dev` goes. The proxy closes the app's open connections to the old database, so its connection pool reconnects to the new one.
 - **Other databases:** connections to any other name pass through unchanged.
 - **Encryption:** the proxy doesn't speak TLS. Use `sslmode=prefer` (the default) or `disable`.
 - **Linux:** when the app runs in a container, listen on `0.0.0.0` (or the Docker bridge address), not `127.0.0.1`.
@@ -150,7 +151,7 @@ Detected migration tools: Alembic, Django, Prisma, Rails, Flyway and Knex. Anyth
 ## Limitations (v1)
 
 - **Postgres only.** MySQL/MariaDB is next, then SQL Server and Oracle (see the spec's phasing).
-- **Env-file routing recreates the app on each switch.** Proxy mode avoids that, but the proxy has to be running, and copying the active database still stops the app briefly.
+- **Env-file routing recreates the app on each switch.** Proxy mode avoids that. While a copy of the app's database runs, the app's requests wait for the copy to finish.
 - **Without a version table** (a tool sidetrack doesn't know, and no `version_table` set), migration state comes from file names in git and sidetrack's own records. If you run migrations yourself, those can lag behind. The only effect is that a later `switch` may run your migration command when there's nothing new to apply, which is harmless.
 - **Every DB branch is a full copy** unless you're on Postgres 18 with a copy-on-write filesystem. Use `gc` and `delete` to reclaim space.
 - **One database service per project.**

@@ -119,6 +119,15 @@ Decisions:
 21. **`proxy --daemon` re-runs the binary in the background.** It's a child process in its own process group, so Ctrl-C in the terminal doesn't stop it, with stdout/stderr going to `.git/sidetrack-proxy.log`. The pid goes in `.git/sidetrack-proxy.pid` once the port accepts connections. `--stop` sends `kill` to that pid. There's no fork or libc, which keeps it simple, at the cost of being Unix-only for now.
 22. **`init --proxy` never edits the app's env file.** It writes proxy-mode config, with `routing.database` read from the detected env variable, and prints the one-time URL change for the user to make.
 
+23. **A running proxy holds connections instead of the app being stopped** (`HoldConnections` / `ReleaseConnections`; supersedes the restart part of decision 18).
+    - The hold is a file next to the target (`.git/sidetrack-proxy-hold`: db name and expiry). A new connection that would reach that database waits until the hold is removed, then re-reads the target, so it lands on the new branch.
+    - Existing sessions are still terminated before the copy.
+    - The hold expires after 10 minutes, in case sidetrack dies before releasing it.
+    - Undo removes the hold.
+    - Without a running proxy, plans stop the app as before.
+24. **Proxy autostart:** before planning, the CLI and the hook start the proxy in the background if it isn't running (`routing.autostart`, default true). It never does this on `--dry-run`. It happens before `world()`, so the plan can already use holds.
+25. **Detection ranks Postgres services.** A service with `POSTGRES_*` settings scores 2, and one that other services depend on scores 1. Before, the first one by name won, which picked an app container that only used the postgres image for psql.
+
 `tests/e2e/proxy.sh` covers it all against real Docker. The app container reaches the host proxy via `host.docker.internal` (`extra_hosts: host-gateway` on Linux).
 
 ## Test strategy

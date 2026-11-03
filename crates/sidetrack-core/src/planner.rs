@@ -53,6 +53,13 @@ pub struct DiskSpace {
     pub total_bytes: u64,
 }
 
+/// How the app is kept away from a database while it's copied.
+enum Pause {
+    Nothing,
+    Held(String),
+    Stopped(Vec<String>),
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub enum ResetTo {
     /// Latest snapshot of the active branch, else its parent.
@@ -550,18 +557,15 @@ impl<'a> Planner<'a> {
             None
         };
         let running = self.running_app_services();
-        let mut stopped = false;
+        let mut pause = Pause::Nothing;
 
         let applied = match &base {
             Some(base) => {
                 plan.notes.push(base.why.clone());
-                let stop = base.db_name == active && !running.is_empty();
-                stopped = stop;
-                if stop {
-                    plan.push(Step::StopServices {
-                        services: running.clone(),
-                    });
+                if base.db_name == active {
+                    pause = self.push_pause(plan, &base.db_name, &running);
                 }
+                let stop = matches!(pause, Pause::Stopped(_));
                 self.push_terminate(plan, &base.db_name, stop);
                 plan.push(Step::CloneDatabase {
                     source: base.db_name.clone(),
@@ -575,10 +579,8 @@ impl<'a> Planner<'a> {
                     base_commit,
                     migration_files: base.applied.clone(),
                 });
-                if stop && !switch_to {
-                    plan.push(Step::StartServices {
-                        services: running.clone(),
-                    });
+                if !switch_to {
+                    self.push_unpause(plan, std::mem::replace(&mut pause, Pause::Nothing));
                 }
                 base.applied.clone()
             }
@@ -604,12 +606,16 @@ impl<'a> Planner<'a> {
         };
 
         if switch_to {
-            let restart = if self.cfg.routing.is_proxy() && !stopped {
-                vec![]
-            } else {
-                running
+            // Env mode recreates the app; proxy mode restarts only what was stopped.
+            let restart = match (&pause, self.cfg.routing.is_proxy()) {
+                (Pause::Stopped(s), true) => s.clone(),
+                (_, true) => vec![],
+                (_, false) => running,
             };
             self.push_route(plan, active, name, &restart);
+            if let Pause::Held(db) = pause {
+                plan.push(Step::ReleaseConnections { db });
+            }
             let pending = migrations::pending(target, &applied);
             if !pending.is_empty() {
                 self.push_migrations(plan, name, pending, target);
@@ -635,6 +641,30 @@ impl<'a> Planner<'a> {
 
     /// Show open sessions that will be closed. After stopping the app, its own
     /// sessions go away; anything else (a psql shell, a GUI client) is listed.
+    /// Keep the app away from `db` while it's copied, renamed or dropped: hold its
+    /// new connections in the proxy when one is running, else stop `services`.
+    fn push_pause(&self, plan: &mut Plan, db: &str, services: &[String]) -> Pause {
+        if self.cfg.routing.is_proxy() && self.world.proxy_running == Some(true) {
+            plan.push(Step::HoldConnections { db: db.to_string() });
+            Pause::Held(db.to_string())
+        } else if !services.is_empty() {
+            plan.push(Step::StopServices {
+                services: services.to_vec(),
+            });
+            Pause::Stopped(services.to_vec())
+        } else {
+            Pause::Nothing
+        }
+    }
+
+    fn push_unpause(&self, plan: &mut Plan, pause: Pause) {
+        match pause {
+            Pause::Held(db) => plan.push(Step::ReleaseConnections { db }),
+            Pause::Stopped(services) => plan.push(Step::StartServices { services }),
+            Pause::Nothing => {}
+        }
+    }
+
     fn push_terminate(&self, plan: &mut Plan, db: &str, app_stopped: bool) {
         if let Some(sessions) = self.world.connections.get(db) {
             if !sessions.is_empty() {
@@ -703,12 +733,9 @@ impl<'a> Planner<'a> {
         );
         plan.warnings = self.reconcile();
         let running = self.running_app_services();
-        if !running.is_empty() {
-            plan.push(Step::StopServices {
-                services: running.clone(),
-            });
-        }
-        self.push_terminate(&mut plan, &b.db_name, !running.is_empty());
+        let pause = self.push_pause(&mut plan, &b.db_name, &running);
+        let stop = matches!(pause, Pause::Stopped(_));
+        self.push_terminate(&mut plan, &b.db_name, stop);
         plan.push(Step::CloneDatabase {
             source: b.db_name.clone(),
             target: name.clone(),
@@ -724,9 +751,7 @@ impl<'a> Planner<'a> {
             migration_files: self.db_state(b)?.applied,
             size_bytes: self.size(&b.db_name),
         });
-        if !running.is_empty() {
-            plan.push(Step::StartServices { services: running });
-        }
+        self.push_unpause(&mut plan, pause);
         self.guard_disk(plan)
     }
 
@@ -795,18 +820,15 @@ impl<'a> Planner<'a> {
             plan.push(Step::DropDatabase { name: tmp.clone() });
         }
         let running = self.running_app_services();
-        if !running.is_empty() {
-            plan.push(Step::StopServices {
-                services: running.clone(),
-            });
-        }
+        let pause = self.push_pause(&mut plan, &b.db_name, &running);
+        let stop = matches!(pause, Pause::Stopped(_));
         self.push_terminate(&mut plan, &source, false);
         plan.push(Step::CloneDatabase {
             source: source.clone(),
             target: tmp.clone(),
             size_bytes: self.size(&source),
         });
-        self.push_terminate(&mut plan, &b.db_name, !running.is_empty());
+        self.push_terminate(&mut plan, &b.db_name, stop);
         plan.push(Step::DropDatabase {
             name: b.db_name.clone(),
         });
@@ -818,9 +840,7 @@ impl<'a> Planner<'a> {
             db_name: b.db_name.clone(),
             migration_files: files.clone(),
         });
-        if !running.is_empty() {
-            plan.push(Step::StartServices { services: running });
-        }
+        self.push_unpause(&mut plan, pause);
         if let Some(current) = self.git.current_branch()? {
             if current == b.git_branch {
                 let target = self.target_files(&current)?;
@@ -1014,11 +1034,13 @@ impl<'a> Planner<'a> {
             plan.push(Step::DropTemporaryDatabase { name: copy.clone() });
         }
         let running = self.running_app_services();
-        let stop = self.world.active_db.as_deref() == Some(source.as_str()) && !running.is_empty();
+        let pause = if self.world.active_db.as_deref() == Some(source.as_str()) {
+            self.push_pause(&mut plan, &source, &running)
+        } else {
+            Pause::Nothing
+        };
+        let stop = matches!(pause, Pause::Stopped(_));
         if stop {
-            plan.push(Step::StopServices {
-                services: running.clone(),
-            });
             plan.notes.push(format!(
                 "{} is stopped only while the copy runs; use --from <snapshot or other branch> to avoid that",
                 running.join(", ")
@@ -1030,9 +1052,7 @@ impl<'a> Planner<'a> {
             target: copy.clone(),
             size_bytes: self.size(&source),
         });
-        if stop {
-            plan.push(Step::StartServices { services: running });
-        }
+        self.push_unpause(&mut plan, pause);
         plan.push(Step::DropTemporaryDatabase { name: copy });
         self.guard_disk(plan)
     }
@@ -1169,6 +1189,7 @@ mod tests {
                 database: None,
                 listen: None,
                 upstream: None,
+                autostart: None,
             },
             migrations: MigrationsConfig {
                 tool: "generic".into(),
@@ -1256,6 +1277,8 @@ mod tests {
                 Step::RenameDatabase { .. } => "rename",
                 Step::RewriteEnv { .. } => "env",
                 Step::SetProxyTarget { .. } => "proxy",
+                Step::HoldConnections { .. } => "hold",
+                Step::ReleaseConnections { .. } => "release",
                 Step::StartServices { .. } => "start",
                 Step::RunMigrations { .. } => "migrate",
                 Step::RunSeed { .. } => "seed",
@@ -1326,6 +1349,29 @@ mod tests {
         let proxy = k.iter().position(|s| *s == "proxy").unwrap();
         assert_eq!(k[proxy + 1], "start", "{k:?}");
         assert!(!k.contains(&"env"));
+    }
+
+    #[test]
+    fn running_proxy_holds_connections_instead_of_stopping_the_app() {
+        let (_d, repo) = repo();
+        commit_file(&repo, "migrations/001.sql", "1");
+        git(&repo, &["checkout", "-q", "-b", "c"]);
+        let mut w = world(
+            vec![branch(1, "main", "main_db", &["001.sql"], 1)],
+            "main_db",
+        );
+        w.proxy_running = Some(true);
+        let c = proxy_cfg();
+        let k = kinds(&Planner::new(&c, &repo, &w).switch("c").unwrap());
+        assert_eq!(k[0], "hold", "{k:?}");
+        let route = k.iter().position(|s| *s == "proxy").unwrap();
+        assert_eq!(k[route + 1], "release", "release after routing: {k:?}");
+        assert!(!k.contains(&"stop") && !k.contains(&"start"), "{k:?}");
+
+        git(&repo, &["checkout", "-q", "main"]);
+        let k = kinds(&Planner::new(&c, &repo, &w).snapshot(None, 1).unwrap());
+        assert_eq!(k.first(), Some(&"hold"), "{k:?}");
+        assert!(k.contains(&"release") && !k.contains(&"stop"), "{k:?}");
     }
 
     #[test]

@@ -119,6 +119,7 @@ fn run_inner(dir: &Path, flag: &str) -> Result<()> {
         eprintln!("sidetrack: run `sidetrack init` to link databases to branches in this repo");
         return Ok(());
     };
+    crate::autostart_proxy(&ws);
     let world = match ws.world() {
         Ok(w) => w,
         Err(e) => {

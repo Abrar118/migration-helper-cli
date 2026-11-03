@@ -90,6 +90,14 @@ pub enum Step {
         from_db: String,
         to_db: String,
     },
+    /// Proxy mode: new connections to `db` wait in the proxy (instead of the app
+    /// being stopped) until `ReleaseConnections`.
+    HoldConnections {
+        db: String,
+    },
+    ReleaseConnections {
+        db: String,
+    },
     /// Proxy mode: send the app's connections for `database` to `to_db`.
     SetProxyTarget {
         database: String,
@@ -198,6 +206,10 @@ impl Step {
             } => {
                 format!("Point {variable} in {file} at {to_db} (was {from_db})")
             }
+            Step::HoldConnections { db } => {
+                format!("Hold new connections to {db} in the proxy while it's copied")
+            }
+            Step::ReleaseConnections { db } => format!("Release held connections to {db}"),
             Step::SetProxyTarget {
                 database,
                 from_db,
