@@ -61,6 +61,28 @@ These refine the spec; each is noted in code where it applies.
 12. **Detection reads three compose views:** resolved (final values), `--no-env-resolution` (which `env_file` a value comes from), and `--no-interpolate` (`${VAR}` references, to find the variable in the project `.env`).
 13. **Postgres 18 "clone" isn't always copy-on-write.** `file_copy_method = clone` falls back to a normal copy on filesystems without reflinks (seen on overlayfs), so it's reported as "Clone", not as instant.
 
+## v1.1 (fast follows)
+
+| Feature | Where |
+|---|---|
+| `sidetrack bench [--from X]`: copy, time, drop the copy; estimates for 1–10 GB | `Planner::bench`, `bench_summary` in the CLI |
+| Disk guard: refuse plans that won't fit, warn under 1 GB / 10% free | `Planner::guard_disk`, `Workspace::disk_space` (`df` in the DB container) |
+| Schema summary on switch plans | `schema.rs`, `Workspace::annotate_schema` |
+| `sidetrack rename <old> <new>` | `Planner::rename`, `Step::RelinkBranch` |
+| `[snapshots] keep = N` retention in `gc` | `Planner::push_retention` |
+
+Measurements so far (Linux sandbox, overlayfs, Postgres 16, 1.9 GB pgbench database):
+- `STRATEGY FILE_COPY`: 13 s right after loading the data (the checkpoint dominates), then 3.9 s.
+- `WAL_LOG`: 11.9 s.
+
+Copies of databases under 50 MB are dominated by fixed costs, so `bench` gives no estimates for them. The Mac / Docker Desktop number is still open; it's what `sidetrack bench` is for.
+
+Decisions:
+
+14. **Bench drops its copy with `DropTemporaryDatabase`**, a non-destructive step, so it doesn't trigger the "this deletes data" prompt.
+15. **The schema summary is best effort.** It's attached after planning (the planner stays pure), only for switches to an existing DB branch, and silently skipped if a query fails.
+16. **Renaming an adopted database keeps its name**; only the git link moves. Other DB branches get the new branch's name.
+
 ## Test strategy
 
 - **Unit tests:** naming, envfile, config round-trip, compose JSON parsing, detection on fixture directories, file-set logic, planner (pure inputs).

@@ -95,7 +95,9 @@ To add a `plan::Step` variant, touch all of these:
 - `Applier::run`, which returns the step's `Undo` (`apply.rs`).
 - The exhaustive `kinds()` helper in the planner tests.
 
-Plans serialize to JSON (`--json`) as `{"type": "<snake_case>", …}`, and that format is meant to stay stable for the future desktop app.
+Plans serialize to JSON (`--json`) as `{"type": "<snake_case>", …}`, and that format is meant to stay stable for the future desktop app. An applied plan's `Report` carries per-step `timings`; `bench` reads its numbers from there.
+
+Things added after planning, outside the pure planner: `Workspace::annotate_schema` (schema summary on switch plans) and `World.disk` (from `df` inside the DB container), which `Planner::guard_disk` checks for every plan that copies.
 
 ## Conventions
 
