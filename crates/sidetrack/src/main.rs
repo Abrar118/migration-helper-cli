@@ -21,6 +21,8 @@ use sidetrack_core::registry::{self, NewBranch, Registry};
 use sidetrack_core::workspace::{compose_for, Workspace};
 
 use crate::ui::{ago, confirm, run_plan, Opts};
+use sidetrack_core::apply::Report;
+use sidetrack_core::plan::{Plan, Step};
 
 #[derive(Parser)]
 #[command(
@@ -103,6 +105,14 @@ enum Command {
     },
     /// Check that everything sidetrack needs is in place.
     Doctor,
+    /// Time how long copying a database takes here, then delete the copy.
+    Bench {
+        /// Database, DB branch or snapshot to copy (default: the active database).
+        #[arg(long)]
+        from: Option<String>,
+    },
+    /// Follow a git branch rename: move OLD's DB branch to NEW.
+    Rename { old: String, new: String },
 }
 
 #[derive(Subcommand)]
@@ -200,6 +210,7 @@ fn plan_command(command: Command, dir: &Path, opts: &Opts) -> Result<bool> {
                 }
             };
             let mut plan = planner.switch(&branch)?;
+            ws.annotate_schema(&mut plan);
             if current.as_deref() != Some(branch.as_str()) {
                 plan.warnings.push(format!(
                     "you have {} checked out, so the code won't match {branch}'s database",
@@ -238,6 +249,13 @@ fn plan_command(command: Command, dir: &Path, opts: &Opts) -> Result<bool> {
         }
         Command::Delete { branch } => planner.delete(&branch)?,
         Command::Gc => planner.gc()?,
+        Command::Rename { old, new } => planner.rename(&old, &new)?,
+        Command::Bench { from } => {
+            let plan = planner.bench(from.as_deref())?;
+            return ui::run_plan_then(&ws, &world.project, &plan, opts, |report| {
+                bench_summary(&plan, report)
+            });
+        }
         _ => unreachable!("not a plan command"),
     };
     run_plan(&ws, &world.project, &plan, opts)
@@ -447,7 +465,11 @@ fn status(dir: &Path, opts: &Opts) -> Result<bool> {
         .and_then(|b| planner.branch_for_git(b))
         .map(|b| b.db_name.clone());
     let plan = match &branch {
-        Some(b) => Some(planner.switch(b)?),
+        Some(b) => {
+            let mut p = planner.switch(b)?;
+            ws.annotate_schema(&mut p);
+            Some(p)
+        }
         None => None,
     };
     let in_sync = plan.as_ref().is_some_and(|p| p.is_noop());
@@ -724,6 +746,17 @@ fn doctor(dir: &Path, opts: &Opts) -> Result<bool> {
             }
             Err(e) => check("postgres", false, format!("{e:#}")),
         }
+        if let Some(disk) = ws.disk_space() {
+            check(
+                "disk space",
+                disk.free_bytes >= 1 << 30,
+                format!(
+                    "{} free of {} (each DB branch is a full copy)",
+                    format_bytes(disk.free_bytes),
+                    format_bytes(disk.total_bytes)
+                ),
+            );
+        }
     }
     let app_down: Vec<&String> = ws
         .cfg
@@ -758,4 +791,79 @@ fn finish_doctor(checks: Vec<(String, bool, String)>, opts: &Opts) -> Result<boo
         }
     }
     Ok(ok)
+}
+
+// ----------------------------------------------------------------------- bench
+
+/// Copy speed and projected copy times for common database sizes.
+fn bench_summary(plan: &Plan, report: &Report) -> Option<(String, serde_json::Value)> {
+    let (index, source, size) = plan.steps.iter().enumerate().find_map(|(i, s)| match s {
+        Step::CloneDatabase {
+            source, size_bytes, ..
+        } => Some((i, source.clone(), *size_bytes)),
+        _ => None,
+    })?;
+    let timing = report.timings.iter().find(|t| t.step == index)?;
+    let seconds = timing.seconds.max(0.001);
+    let rate = size as f64 / seconds; // bytes per second
+    let gib = 1u64 << 30;
+    let mut sizes = vec![size, gib, 2 * gib, 5 * gib, 10 * gib];
+    sizes.sort_unstable();
+    sizes.dedup();
+    let mut text = format!(
+        "\nCopied {source} ({}) in {} — {}/s{}.\nAt this speed a copy would take about:\n",
+        format_bytes(size),
+        duration(seconds),
+        format_bytes(rate as u64),
+        timing
+            .detail
+            .as_deref()
+            .map(|d| format!(", {d}"))
+            .unwrap_or_default()
+    );
+    let mut projections = vec![];
+    if size < 50 << 20 {
+        // Fixed costs (a checkpoint, catalog work) dominate tiny copies, so a
+        // straight-line estimate for big databases would be far too slow.
+        text = format!(
+            "\nCopied {source} ({}) in {}{}.\n\
+             It's too small to estimate bigger copies from: fixed costs dominate. \
+             Run `sidetrack bench --from <a realistic database>` for a real number.\n",
+            format_bytes(size),
+            duration(seconds),
+            timing
+                .detail
+                .as_deref()
+                .map(|d| format!(", {d}"))
+                .unwrap_or_default()
+        );
+    } else {
+        for s in sizes {
+            let est = s as f64 / rate;
+            text.push_str(&format!("  {:>9}  {}\n", format_bytes(s), duration(est)));
+            projections.push(json!({ "size_bytes": s, "seconds": est }));
+        }
+        text.push_str(
+            "The first copy after heavy writes can be slower: Postgres flushes recent changes \
+             to disk before copying.\n",
+        );
+    }
+    let value = json!({
+        "source": source,
+        "size_bytes": size,
+        "seconds": seconds,
+        "bytes_per_second": rate,
+        "method": timing.detail,
+        "projections": projections,
+    });
+    Some((text, value))
+}
+
+fn duration(seconds: f64) -> String {
+    if seconds < 60.0 {
+        format!("{seconds:.1}s")
+    } else {
+        let s = seconds.round() as u64;
+        format!("{}m {:02}s", s / 60, s % 60)
+    }
 }

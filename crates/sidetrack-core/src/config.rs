@@ -16,6 +16,22 @@ pub struct Config {
     pub compose: ComposeConfig,
     #[serde(default, skip_serializing_if = "GitConfig::is_default")]
     pub git: GitConfig,
+    #[serde(default, skip_serializing_if = "SnapshotsConfig::is_default")]
+    pub snapshots: SnapshotsConfig,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct SnapshotsConfig {
+    /// `gc` keeps this many of the newest *unlabelled* snapshots per DB branch and
+    /// drops older ones. Labelled snapshots are always kept. Unset = keep all.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub keep: Option<usize>,
+}
+
+impl SnapshotsConfig {
+    fn is_default(&self) -> bool {
+        self == &Self::default()
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -171,6 +187,7 @@ mod tests {
             },
             compose: ComposeConfig::default(),
             git: GitConfig::default(),
+            snapshots: SnapshotsConfig::default(),
         }
     }
 

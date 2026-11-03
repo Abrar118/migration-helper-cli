@@ -60,22 +60,18 @@ impl Postgres {
 
     /// Run statements in one session; each `-c` is its own transaction.
     fn psql(&self, statements: &[String]) -> Result<String> {
+        self.psql_in(MAINTENANCE_DB, statements)
+    }
+
+    /// Run statements in one session on database `db`.
+    fn psql_in(&self, db: &str, statements: &[String]) -> Result<String> {
         let (prog, args) = self.argv.split_first().context("empty psql command")?;
         let mut cmd = Command::new(prog);
         cmd.args(args);
         if let Some(d) = &self.dir {
             cmd.current_dir(d);
         }
-        cmd.args([
-            "-X",
-            "-q",
-            "-A",
-            "-t",
-            "-v",
-            "ON_ERROR_STOP=1",
-            "-d",
-            MAINTENANCE_DB,
-        ]);
+        cmd.args(["-X", "-q", "-A", "-t", "-v", "ON_ERROR_STOP=1", "-d", db]);
         cmd.arg("-F").arg(SEP.to_string());
         for s in statements {
             cmd.arg("-c").arg(s);
@@ -84,7 +80,11 @@ impl Postgres {
     }
 
     fn query(&self, sql: &str) -> Result<Vec<Vec<String>>> {
-        let out = self.psql(&[sql.to_string()])?;
+        self.query_in(MAINTENANCE_DB, sql)
+    }
+
+    fn query_in(&self, db: &str, sql: &str) -> Result<Vec<Vec<String>>> {
+        let out = self.psql_in(db, &[sql.to_string()])?;
         Ok(out
             .lines()
             .filter(|l| !l.is_empty())
@@ -98,6 +98,24 @@ impl Postgres {
             .next()
             .and_then(|r| r.into_iter().next())
             .with_context(|| format!("no result for `{sql}`"))
+    }
+
+    /// Tables and columns of `db` (user schemas only).
+    pub fn schema(&self, db: &str) -> Result<crate::schema::Schema> {
+        let rows = self.query_in(
+            db,
+            "SELECT table_schema || '.' || table_name, column_name || ' ' || data_type \
+             FROM information_schema.columns \
+             WHERE table_schema NOT IN ('pg_catalog', 'information_schema') \
+             ORDER BY table_schema, table_name, ordinal_position",
+        )?;
+        let mut out = crate::schema::Schema::new();
+        for r in rows {
+            if let [table, column] = r.as_slice() {
+                out.entry(table.clone()).or_default().push(column.clone());
+            }
+        }
+        Ok(out)
     }
 
     /// e.g. 160004 for 16.4.

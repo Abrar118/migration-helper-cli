@@ -28,6 +28,15 @@ pub struct World {
     pub running_services: Vec<String>,
     /// The env file is tracked by git (sidetrack refuses to rewrite it).
     pub env_file_tracked: bool,
+    /// Disk space where the database container keeps its data, if known.
+    #[serde(default)]
+    pub disk: Option<DiskSpace>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub struct DiskSpace {
+    pub free_bytes: u64,
+    pub total_bytes: u64,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -345,7 +354,7 @@ impl<'a> Planner<'a> {
                 )?;
             }
         }
-        Ok(plan)
+        self.guard_disk(plan)
     }
 
     /// Point the app at `to` and recreate the running app services.
@@ -526,7 +535,7 @@ impl<'a> Planner<'a> {
         self.push_new_branch(
             &mut plan, git_branch, &name, &active, &target, from, empty, false,
         )?;
-        Ok(plan)
+        self.guard_disk(plan)
     }
 
     // ---------------------------------------------------------------- snapshot
@@ -582,7 +591,7 @@ impl<'a> Planner<'a> {
         if !running.is_empty() {
             plan.push(Step::StartServices { services: running });
         }
-        Ok(plan)
+        self.guard_disk(plan)
     }
 
     pub fn snapshot_remove(&self, name: &str) -> Result<Plan> {
@@ -688,7 +697,7 @@ impl<'a> Planner<'a> {
         plan.push(Step::TouchBranch {
             db_name: b.db_name.clone(),
         });
-        Ok(plan)
+        self.guard_disk(plan)
     }
 
     // ------------------------------------------------------------------ delete
@@ -780,6 +789,9 @@ impl<'a> Planner<'a> {
             }
             self.push_delete_branch(&mut plan, b);
         }
+        if let Some(keep) = self.cfg.snapshots.keep {
+            self.push_retention(&mut plan, keep, &mut freed);
+        }
         for s in &self.world.snapshots {
             if !self.live(&s.db_name)
                 && !plan.steps.iter().any(
@@ -795,6 +807,207 @@ impl<'a> Planner<'a> {
             plan.notes.push(format!(
                 "frees about {}",
                 crate::engine::postgres::format_bytes(freed)
+            ));
+        }
+        Ok(plan)
+    }
+
+    /// Drop unlabelled snapshots beyond the newest `keep` per branch (`snapshots.keep`).
+    fn push_retention(&self, plan: &mut Plan, keep: usize, freed: &mut u64) {
+        let dropping = |db: &str| {
+            plan.steps
+                .iter()
+                .any(|st| matches!(st, Step::DropDatabase { name } if name == db))
+        };
+        let mut extra = vec![];
+        for b in &self.world.branches {
+            // `world.snapshots` is newest first.
+            let old = self
+                .world
+                .snapshots
+                .iter()
+                .filter(|s| s.branch_id == b.id && s.label.is_none() && self.live(&s.db_name))
+                .skip(keep);
+            for s in old {
+                if !dropping(&s.db_name) {
+                    extra.push(s);
+                }
+            }
+        }
+        if !extra.is_empty() {
+            plan.notes.push(format!(
+                "{} old snapshot(s) beyond snapshots.keep = {keep} (labelled snapshots are kept)",
+                extra.len()
+            ));
+        }
+        for s in extra {
+            *freed += self.size(&s.db_name);
+            plan.push(Step::DropDatabase {
+                name: s.db_name.clone(),
+            });
+            plan.push(Step::ForgetSnapshot {
+                db_name: s.db_name.clone(),
+            });
+        }
+    }
+
+    // ------------------------------------------------------------------- bench
+
+    /// Time a copy of `from` (default: the active database), then drop the copy.
+    pub fn bench(&self, from: Option<&str>) -> Result<Plan> {
+        let source = match from {
+            None => self.active()?.to_string(),
+            Some(name) => self
+                .branch_for_git(name)
+                .map(|b| b.db_name.clone())
+                .unwrap_or_else(|| name.to_string()),
+        };
+        anyhow::ensure!(self.live(&source), "{source} doesn't exist on the server");
+        let copy = naming::bench_db_name(&source);
+        let mut plan = Plan::new(
+            PlanKind::Bench,
+            format!(
+                "Time a copy of {source} ({})",
+                crate::engine::postgres::format_bytes(self.size(&source))
+            ),
+        );
+        if self.live(&copy) {
+            plan.warnings.push(format!(
+                "{copy} is left over from an earlier bench and will be dropped first"
+            ));
+            plan.push(Step::DropTemporaryDatabase { name: copy.clone() });
+        }
+        let running = self.running_app_services();
+        let stop = self.world.active_db.as_deref() == Some(source.as_str()) && !running.is_empty();
+        if stop {
+            plan.push(Step::StopServices {
+                services: running.clone(),
+            });
+            plan.notes.push(format!(
+                "{} is stopped only while the copy runs; use --from <snapshot or other branch> to avoid that",
+                running.join(", ")
+            ));
+        }
+        self.push_terminate(&mut plan, &source, stop);
+        plan.push(Step::CloneDatabase {
+            source: source.clone(),
+            target: copy.clone(),
+            size_bytes: self.size(&source),
+        });
+        if stop {
+            plan.push(Step::StartServices { services: running });
+        }
+        plan.push(Step::DropTemporaryDatabase { name: copy });
+        self.guard_disk(plan)
+    }
+
+    // ------------------------------------------------------------------ rename
+
+    /// Follow a renamed git branch (`git branch -m old new`).
+    pub fn rename(&self, old: &str, new: &str) -> Result<Plan> {
+        let b = self
+            .branch_for_git(old)
+            .or_else(|| self.branch_for_db(old))
+            .with_context(|| format!("no DB branch for {old}"))?;
+        if let Some(other) = self.branch_for_git(new) {
+            bail!("{new} already has a DB branch ({})", other.db_name);
+        }
+        let plain = naming::db_name_for_branch(new);
+        // Adopted databases (e.g. the original app_dev) keep their name; only the link moves.
+        let new_db = if b.adopted || plain == b.db_name {
+            b.db_name.clone()
+        } else {
+            self.choose_name(new)?
+        };
+        let mut plan = Plan::new(
+            PlanKind::Rename,
+            format!(
+                "Link {} to git branch {new} (was {})",
+                b.db_name, b.git_branch
+            ),
+        );
+        plan.warnings = self.reconcile();
+        if new_db != b.db_name {
+            anyhow::ensure!(
+                self.live(&b.db_name),
+                "{} doesn't exist on the server",
+                b.db_name
+            );
+            plan.summary = format!("Rename {} → {new_db} for git branch {new}", b.db_name);
+            let active = self.world.active_db.as_deref() == Some(b.db_name.as_str());
+            let running = if active {
+                self.running_app_services()
+            } else {
+                vec![]
+            };
+            if active {
+                self.ensure_env_writable()?;
+                if !running.is_empty() {
+                    plan.push(Step::StopServices {
+                        services: running.clone(),
+                    });
+                }
+            }
+            self.push_terminate(&mut plan, &b.db_name, !running.is_empty());
+            plan.push(Step::RenameDatabase {
+                from: b.db_name.clone(),
+                to: new_db.clone(),
+            });
+            if active {
+                plan.push(Step::RewriteEnv {
+                    file: self.cfg.routing.file.clone(),
+                    variable: self.cfg.routing.variable.clone(),
+                    from_db: b.db_name.clone(),
+                    to_db: new_db.clone(),
+                });
+                if !running.is_empty() {
+                    plan.push(Step::StartServices { services: running });
+                }
+            }
+        }
+        plan.push(Step::RelinkBranch {
+            db_name: b.db_name.clone(),
+            new_db_name: new_db,
+            new_git_branch: new.to_string(),
+        });
+        if self.git.branch_exists(&b.git_branch)? && !self.git.branch_exists(new)? {
+            plan.notes.push(format!(
+                "this only renames the database; rename the git branch with `git branch -m {} {new}`",
+                b.git_branch
+            ));
+        }
+        Ok(plan)
+    }
+
+    // ------------------------------------------------------------- disk guard
+
+    /// Refuse plans that won't fit on the database container's disk; warn when
+    /// they'd leave less than 1 GB or 10% free.
+    fn guard_disk(&self, mut plan: Plan) -> Result<Plan> {
+        let need = plan.added_bytes();
+        let Some(disk) = self.world.disk else {
+            return Ok(plan);
+        };
+        if need == 0 {
+            return Ok(plan);
+        }
+        use crate::engine::postgres::format_bytes;
+        if need > disk.free_bytes {
+            bail!(
+                "not enough disk space for the {} container: this needs about {}, but only {} is free. \
+                 Free some with `sidetrack gc` or `sidetrack delete <branch>`",
+                self.cfg.database.service,
+                format_bytes(need),
+                format_bytes(disk.free_bytes)
+            );
+        }
+        let left = disk.free_bytes - need;
+        let reserve = (1u64 << 30).max(disk.total_bytes / 10);
+        if left < reserve {
+            plan.warnings.push(format!(
+                "this leaves only {} free on the database's disk (of {}); consider `sidetrack gc`",
+                format_bytes(left),
+                format_bytes(disk.total_bytes)
             ));
         }
         Ok(plan)
@@ -833,6 +1046,7 @@ mod tests {
             git: GitConfig {
                 main_branch: Some("main".into()),
             },
+            snapshots: Default::default(),
         }
     }
 
@@ -885,6 +1099,7 @@ mod tests {
             active_db: Some(active.into()),
             running_services: vec!["api".into()],
             env_file_tracked: false,
+            disk: None,
         }
     }
 
@@ -909,6 +1124,8 @@ mod tests {
                 Step::RegisterSnapshot { .. } => "register_snapshot",
                 Step::ForgetBranch { .. } => "forget",
                 Step::ForgetSnapshot { .. } => "forget_snapshot",
+                Step::DropTemporaryDatabase { .. } => "drop_temp",
+                Step::RelinkBranch { .. } => "relink",
             })
             .collect()
     }
@@ -1146,6 +1363,122 @@ mod tests {
                 },
                 Step::ForgetBranch {
                     db_name: "done_db".into()
+                }
+            ]
+        );
+    }
+
+    #[test]
+    fn bench_stops_app_only_for_the_active_database() {
+        let (_d, repo) = repo();
+        let w = world(
+            vec![
+                branch(1, "main", "main_db", &[], 1),
+                branch(2, "x", "x_db", &[], 2),
+            ],
+            "main_db",
+        );
+        let c = cfg();
+        let p = Planner::new(&c, &repo, &w);
+        assert_eq!(
+            kinds(&p.bench(None).unwrap()),
+            ["stop", "terminate", "clone", "start", "drop_temp"]
+        );
+        assert_eq!(kinds(&p.bench(Some("x")).unwrap()), ["clone", "drop_temp"]);
+        assert!(!p.bench(None).unwrap().has_destructive());
+    }
+
+    #[test]
+    fn disk_guard_refuses_and_warns() {
+        let (_d, repo) = repo();
+        git(&repo, &["checkout", "-q", "-b", "feature"]);
+        let mut w = world(vec![branch(1, "main", "main_db", &[], 1)], "main_db");
+        let c = cfg();
+        w.disk = Some(DiskSpace {
+            free_bytes: 500,
+            total_bytes: 10_000,
+        });
+        let err = Planner::new(&c, &repo, &w).switch("feature").unwrap_err();
+        assert!(format!("{err}").contains("not enough disk space"), "{err}");
+
+        w.disk = Some(DiskSpace {
+            free_bytes: 5_000,
+            total_bytes: 10 << 30,
+        });
+        let plan = Planner::new(&c, &repo, &w).switch("feature").unwrap();
+        assert!(
+            plan.warnings.iter().any(|x| x.contains("leaves only")),
+            "{:?}",
+            plan.warnings
+        );
+    }
+
+    #[test]
+    fn rename_moves_the_database_and_the_env() {
+        let (_d, repo) = repo();
+        let w = world(
+            vec![branch(1, "old/name", "old_name_db", &[], 1)],
+            "old_name_db",
+        );
+        let c = cfg();
+        let plan = Planner::new(&c, &repo, &w)
+            .rename("old/name", "new/name")
+            .unwrap();
+        assert_eq!(
+            kinds(&plan),
+            ["stop", "terminate", "rename", "env", "start", "relink"]
+        );
+        assert!(plan.steps.contains(&Step::RenameDatabase {
+            from: "old_name_db".into(),
+            to: "new_name_db".into()
+        }));
+
+        // Adopted databases keep their name; only the link moves.
+        let mut adopted = branch(1, "main", "app_dev", &[], 1);
+        adopted.adopted = true;
+        let w = world(vec![adopted], "app_dev");
+        let plan = Planner::new(&c, &repo, &w).rename("main", "trunk").unwrap();
+        assert_eq!(kinds(&plan), ["relink"]);
+    }
+
+    #[test]
+    fn gc_keeps_labelled_and_newest_snapshots() {
+        let (_d, repo) = repo();
+        let mut w = world(vec![branch(1, "main", "main_db", &[], 1)], "main_db");
+        for (i, label) in [(3, None), (2, Some("keep-me")), (1, None), (0, None)] {
+            let name = format!("main_db__s{i}");
+            w.server_dbs.insert(
+                name.clone(),
+                DbInfo {
+                    name: name.clone(),
+                    size_bytes: 10,
+                    allow_connections: false,
+                },
+            );
+            w.snapshots.push(Snapshot {
+                id: i,
+                branch_id: 1,
+                seq: i,
+                label: label.map(String::from),
+                db_name: name,
+                commit_id: None,
+                migration_files: FileSet::new(),
+                size_bytes: Some(10),
+                created_at: i,
+            });
+        }
+        let mut c = cfg();
+        c.snapshots.keep = Some(1);
+        let gc = Planner::new(&c, &repo, &w).gc().unwrap();
+        let dropped: Vec<&Step> = gc.steps.iter().filter(|s| s.is_destructive()).collect();
+        assert_eq!(
+            dropped,
+            [
+                &Step::DropDatabase {
+                    name: "main_db__s1".into()
+                },
+                &Step::DropDatabase {
+                    name: "main_db__s0".into()
                 }
             ]
         );

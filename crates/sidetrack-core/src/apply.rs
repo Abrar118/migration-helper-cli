@@ -49,6 +49,17 @@ pub enum Outcome {
 pub struct Report {
     pub outcome: Outcome,
     pub log: Vec<String>,
+    /// Seconds each completed step took, in plan order.
+    pub timings: Vec<StepTiming>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct StepTiming {
+    /// Index into `plan.steps`.
+    pub step: usize,
+    pub seconds: f64,
+    /// Extra detail, e.g. which copy method was used.
+    pub detail: Option<String>,
 }
 
 impl Report {
@@ -74,6 +85,11 @@ enum Undo {
         branch_id: i64,
         files: FileSet,
     },
+    Relink {
+        id: i64,
+        db_name: String,
+        git_branch: String,
+    },
     /// Can't be undone; undo stops here.
     Barrier(String),
     Nothing,
@@ -92,19 +108,23 @@ impl Applier<'_> {
         };
 
         let mut undo: Vec<Undo> = vec![];
-        for step in &plan.steps {
+        let mut timings = vec![];
+        for (index, step) in plan.steps.iter().enumerate() {
             if !step.is_bookkeeping() {
                 say(format!("→ {}", first_line(&step.describe())), &mut log);
             }
             let started = Instant::now();
             match self.run(step) {
                 Ok((u, detail)) => {
-                    if let Some(d) = detail {
-                        say(
-                            format!("  {d} ({:.1}s)", started.elapsed().as_secs_f32()),
-                            &mut log,
-                        );
+                    let seconds = started.elapsed().as_secs_f64();
+                    if let Some(d) = &detail {
+                        say(format!("  {d} ({seconds:.1}s)"), &mut log);
                     }
+                    timings.push(StepTiming {
+                        step: index,
+                        seconds,
+                        detail,
+                    });
                     undo.push(u);
                 }
                 Err(e) => {
@@ -135,7 +155,11 @@ impl Applier<'_> {
                     };
                     self.reg
                         .finish_operation(op, status, Some(&format!("{outcome:?}")))?;
-                    return Ok(Report { outcome, log });
+                    return Ok(Report {
+                        outcome,
+                        log,
+                        timings,
+                    });
                 }
             }
         }
@@ -143,6 +167,7 @@ impl Applier<'_> {
         Ok(Report {
             outcome: Outcome::Done,
             log,
+            timings,
         })
     }
 
@@ -190,6 +215,11 @@ impl Applier<'_> {
                 Undo::RestoreFiles { branch_id, files } => {
                     self.reg.set_branch_files(branch_id, &files)
                 }
+                Undo::Relink {
+                    id,
+                    db_name,
+                    git_branch,
+                } => self.reg.relink_branch(id, &db_name, &git_branch),
             };
             if let Err(e) = r {
                 undo_errors.push(format!("{e:#}"));
@@ -239,6 +269,10 @@ impl Applier<'_> {
             Step::DropDatabase { name } => {
                 self.pg.drop_database(name)?;
                 (Undo::Barrier(format!("dropped {name}")), None)
+            }
+            Step::DropTemporaryDatabase { name } => {
+                self.pg.drop_database(name)?;
+                (Undo::Nothing, None)
             }
             Step::RenameDatabase { from, to } => {
                 self.pg.rename_database(from, to)?;
@@ -355,6 +389,22 @@ impl Applier<'_> {
                     }
                 }
                 (Undo::Nothing, None)
+            }
+            Step::RelinkBranch {
+                db_name,
+                new_db_name,
+                new_git_branch,
+            } => {
+                let b = self.branch(db_name)?;
+                self.reg.relink_branch(b.id, new_db_name, new_git_branch)?;
+                (
+                    Undo::Relink {
+                        id: b.id,
+                        db_name: b.db_name,
+                        git_branch: b.git_branch,
+                    },
+                    None,
+                )
             }
         })
     }
