@@ -1,8 +1,8 @@
-# Spec: Database branches for local Docker development (v1)
+# Spec: sidetrack — database branches for local Docker development (v1)
 
 Status: Draft · Owner: @abrar118 · Last updated: 2026-11-03
 
-Working name for the CLI in this doc: **`mh`** (final name is an open question).
+Tool name: **`sidetrack`**.
 
 ---
 
@@ -64,7 +64,7 @@ Stories, in priority order:
 1. As a backend dev, when I `git switch` to a branch I've worked on before, I want my DB switched to that branch's database, so my migration tool sees exactly the revisions it knows.
 2. As a backend dev, when I switch to a branch I've never used, I want a DB branch created from the nearest compatible ancestor and migrated forward, so I can start working without rebuilding from scratch.
 3. As a backend dev, I want to see what will happen (DB to create, migrations to run, containers to restart, disk cost) before anything runs, so I stay in control.
-4. As a backend dev, I want `mh init` to find my DB container, credentials, migration tool and the container that runs it, so I don't write config by hand.
+4. As a backend dev, I want `sidetrack init` to find my DB container, credentials, migration tool and the container that runs it, so I don't write config by hand.
 5. As a backend dev, I want to take a snapshot before a risky migration and reset to it, so I can iterate on migrations cheaply.
 6. As a backend dev, I want DB branches for deleted or merged git branches to be offered for cleanup, so Docker doesn't run out of disk.
 7. As a backend dev using a git GUI (VS Code, GitKraken), I want branch switches to keep working and to be told when my DB is out of sync, instead of a hung or failed checkout.
@@ -86,7 +86,7 @@ The git branch name is mapped to a DB name deterministically:
 5. If longer than 63 bytes (the Postgres limit), truncate and insert `_` + the first 6 hex characters of the SHA-256 of the original branch name before `_db`.
 6. If the name collides in the registry with a *different* git branch (e.g. `feature/Foo` and `feature-foo`), use the hashed form for the newer branch.
 
-The existing database at `mh init` is **adopted** as the DB branch for the current git branch under its existing name (e.g. `app_dev` ↔ `dev`). It is not renamed.
+The existing database at `sidetrack init` is **adopted** as the DB branch for the current git branch under its existing name (e.g. `app_dev` ↔ `dev`). It is not renamed.
 
 Acceptance:
 - [ ] `feature/auth-v2` → `feature_auth_v2_db`; `main` → `main_db`; `123-fix` → `b_123_fix_db`
@@ -95,7 +95,7 @@ Acceptance:
 
 #### P0.2 Registry (local SQLite)
 
-- **Location:** platform data directory (`~/.local/share/mh/registry.sqlite` on Linux, `~/Library/Application Support/mh/registry.sqlite` on macOS). One file for all projects, so the future UI can show them all.
+- **Location:** platform data directory (`~/.local/share/sidetrack/registry.sqlite` on Linux, `~/Library/Application Support/sidetrack/registry.sqlite` on macOS). One file for all projects, so the future UI can show them all.
 - **Tables (minimum):**
   - `projects` (repo root, compose project, engine, DB service, adopted base DB)
   - `db_branches` (project, git branch, DB name, parent DB branch, base commit, migration-set hash, created/last-used, status)
@@ -104,12 +104,12 @@ Acceptance:
 - **The DB server is the source of truth.** Every command starts with a reconcile step: list the databases that actually exist on the server and compare them with the registry. Any mismatch (missing DB, unknown `*_db` database) appears as a warning in the plan and is never auto-fixed.
 
 Acceptance:
-- [ ] After `docker compose down -v`, `mh status` reports the DB branches as missing and offers to clear them from the registry or recreate them
-- [ ] Deleting the registry file loses no databases. `mh init` can re-adopt existing `*_db` databases.
+- [ ] After `docker compose down -v`, `sidetrack status` reports the DB branches as missing and offers to clear them from the registry or recreate them
+- [ ] Deleting the registry file loses no databases. `sidetrack init` can re-adopt existing `*_db` databases.
 
-#### P0.3 Detection (`mh init`)
+#### P0.3 Detection (`sidetrack init`)
 
-Detection runs once, shows its findings as a plan, and writes the result to `mh.toml` in the repo (committable, no secrets).
+Detection runs once, shows its findings as a plan, and writes the result to `sidetrack.toml` in the repo (committable, no secrets).
 
 1. **Compose:** run `docker compose config --format json`, which resolves overrides, profiles, `include`, `env_file` and `${VAR}` interpolation. Never parse the YAML ourselves. Use `docker compose ps --format json` for what's running.
 2. **DB service:** a service whose image matches `postgres`, `postgis/postgis`, `timescale/timescaledb*`, `bitnami/postgresql` or `supabase/postgres`. Read the user and DB from `POSTGRES_USER` / `POSTGRES_DB` (and their `_FILE` variants, read inside the container).
@@ -122,10 +122,10 @@ Detection runs once, shows its findings as a plan, and writes the result to `mh.
 7. **Migrations directory:** recorded so the tool can read migration file sets from git (see P0.6).
 
 Acceptance:
-- [ ] For a compose project with `db` (postgres), `api` (Alembic installed only in the container) and `DATABASE_URL` in `.env`, `mh init` writes a correct `mh.toml` with no manual edits
+- [ ] For a compose project with `db` (postgres), `api` (Alembic installed only in the container) and `DATABASE_URL` in `.env`, `sidetrack init` writes a correct `sidetrack.toml` with no manual edits
 - [ ] If any value can't be determined, `init` asks for it instead of guessing
 
-`mh.toml` sketch:
+`sidetrack.toml` sketch:
 ```toml
 [database]
 engine  = "postgres"
@@ -221,13 +221,13 @@ Apply? [Y]es / [n]o / [a]lways for this repo
 
 #### P0.10 Git hook
 
-- `mh hook install` adds a `post-checkout` hook. It chains with any existing hook and doesn't replace it.
+- `sidetrack hook install` adds a `post-checkout` hook. It chains with any existing hook and doesn't replace it.
 - The hook does nothing when:
   - it's a file checkout (`$3 == 0`), or the old and new HEAD are the same,
   - a rebase, merge, cherry-pick or bisect is in progress,
   - HEAD is detached (prints a one-line note),
-  - `MH_SKIP=1` is set.
-- **No TTY** (e.g. a GUI client): print one line, `mh: DB still on dev_db — run 'mh switch'`, and exit.
+  - `SIDETRACK_SKIP=1` is set.
+- **No TTY** (e.g. a GUI client): print one line, `sidetrack: DB still on dev_db — run 'sidetrack switch'`, and exit.
 - **Always exits 0.** Errors are printed, never raised.
 - Must finish in under 1 s when nothing applies. Must not block when Docker is down (print a note and exit).
 
@@ -235,17 +235,17 @@ Apply? [Y]es / [n]o / [a]lways for this repo
 
 | Command | Purpose |
 |---|---|
-| `mh init` | Detect, confirm, write `mh.toml`, adopt the current DB, optionally install the hook |
-| `mh status` | Current git branch ↔ active DB branch, drift warnings, reconcile results |
-| `mh list` | DB branches and snapshots with git branch, size, last used, migration count |
-| `mh switch [branch]` | Plan and apply a switch (defaults to the current git branch) |
-| `mh create <branch> [--from <db-branch\|snapshot>\|--empty]` | Explicit creation |
-| `mh snapshot [name]` / `mh snapshot list` / `mh snapshot rm` | Manage snapshots of the active DB branch |
-| `mh reset [--to <snapshot>\|--parent]` | Replace the active DB branch with a fresh copy |
-| `mh delete <branch>` | Drop a DB branch and its snapshots |
-| `mh gc` | Offer to delete DB branches whose git branch is deleted or merged, and old snapshots |
-| `mh hook install\|uninstall` | Manage the git hook |
-| `mh doctor` | Check Docker, compose, Postgres version, clone support, disk space, `.env` tracking |
+| `sidetrack init` | Detect, confirm, write `sidetrack.toml`, adopt the current DB, optionally install the hook |
+| `sidetrack status` | Current git branch ↔ active DB branch, drift warnings, reconcile results |
+| `sidetrack list` | DB branches and snapshots with git branch, size, last used, migration count |
+| `sidetrack switch [branch]` | Plan and apply a switch (defaults to the current git branch) |
+| `sidetrack create <branch> [--from <db-branch\|snapshot>\|--empty]` | Explicit creation |
+| `sidetrack snapshot [name]` / `sidetrack snapshot list` / `sidetrack snapshot rm` | Manage snapshots of the active DB branch |
+| `sidetrack reset [--to <snapshot>\|--parent]` | Replace the active DB branch with a fresh copy |
+| `sidetrack delete <branch>` | Drop a DB branch and its snapshots |
+| `sidetrack gc` | Offer to delete DB branches whose git branch is deleted or merged, and old snapshots |
+| `sidetrack hook install\|uninstall` | Manage the git hook |
+| `sidetrack doctor` | Check Docker, compose, Postgres version, clone support, disk space, `.env` tracking |
 
 Global flags: `--dry-run`, `--json`, `--yes`.
 
@@ -253,7 +253,7 @@ Global flags: `--dry-run`, `--json`, `--yes`.
 
 - **Schema diff in plans:** `pg_dump --schema-only` of the current vs. target DB, shown as a diff in the switch plan.
 - **Disk guard:** warn in the plan when Docker's free disk would drop below a threshold.
-- `mh rename` that mirrors `git branch -m`.
+- `sidetrack rename` that mirrors `git branch -m`.
 - Snapshot retention policy (e.g. keep the last N per branch).
 - First-class Django / Flyway / Prisma / Rails readers that can also check the DB's recorded migration version against the files (drift detection beyond file sets).
 - Clone-capability probe that tells the user how to get instant clones (PG 18 on btrfs/XFS/APFS).
@@ -292,7 +292,7 @@ Measured by dogfooding first: the author's daily work, then 2–3 teammates.
 
 **Leading (first 2 weeks):**
 - Manual migration repairs after a branch switch: **0** (baseline: several per week)
-- Median time for `mh switch` to an existing DB branch: **≤ 10 s**
+- Median time for `sidetrack switch` to an existing DB branch: **≤ 10 s**
 - New DB branch from a 2 GB Postgres base: **≤ 60 s** (ext4) / **≤ 5 s** (clone-capable)
 - Checkouts broken or blocked by the hook: **0**
 - Install to first successful switch: **≤ 5 min**
@@ -308,7 +308,7 @@ Measured by dogfooding first: the author's daily work, then 2–3 teammates.
 |---|---|
 | Copying is slow on Docker Desktop for Mac (VM disk, no reflink) | **Spike first:** time a 2 GB `CREATE DATABASE … TEMPLATE` on Docker Desktop (Mac) and on Linux ext4 before building further |
 | Can't copy while the app is connected | Plan step that closes connections, explicitly shown and confirmed |
-| Detection guesses wrong (wrong `.env` or variable) | Detection results are always confirmed and written to an editable `mh.toml`. Never guess silently at runtime. |
+| Detection guesses wrong (wrong `.env` or variable) | Detection results are always confirmed and written to an editable `sidetrack.toml`. Never guess silently at runtime. |
 | Registry drifts from reality | Reconcile on every command, with the DB server as source of truth |
 | Disk fills with 2 GB copies | `gc`, plan cost estimates, disk guard (P1) |
 | Pointing at a non-local DB | Only act on containers from the current compose project. Refuse if the DB service has no local container. |
@@ -317,10 +317,10 @@ Measured by dogfooding first: the author's daily work, then 2–3 teammates.
 
 | # | Question | Owner | Blocking? |
 |---|---|---|---|
-| 1 | Final product / binary name (`mh` is a placeholder) | Stakeholder | No |
+| 1 | ~~Final product / binary name~~ Decided: `sidetrack` | Stakeholder | Done |
 | 2 | Minimum supported Postgres version: 13 (`DROP … FORCE`) or 15 (`STRATEGY FILE_COPY`)? | Engineering | Yes, before P0.5 |
 | 3 | How fast is a 2 GB template copy on Docker Desktop for Mac in practice? (spike) | Engineering | Yes, sets expectations for goal 2 |
-| 4 | Should `mh.toml` be committed and shared with the team, with only personal settings local? | Stakeholder | No |
+| 4 | Should `sidetrack.toml` be committed and shared with the team, with only personal settings local? | Stakeholder | No |
 | 5 | Monorepos with several DB services: one project per DB service, or several engines per project? | Engineering | No (v1: one DB service) |
 | 6 | Windows support: WSL only, or native Docker Desktop on Windows too? | Stakeholder | No |
 | 7 | Default snapshot policy: automatic snapshot before each forward migration run, or only on demand? | Engineering | No |
