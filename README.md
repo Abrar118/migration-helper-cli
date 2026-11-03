@@ -1,0 +1,131 @@
+# sidetrack
+
+**Give every git branch its own local database.**
+
+You're on `feature/a` with 2 new migrations applied. You get pulled onto `feature/b`, which applies 4 more. Back on `feature/a`, Alembic (or Flyway, Django, Prisma, …) refuses to run: the database holds revisions this branch has never heard of. Usually the fix is checking out `feature/b` again and downgrading one migration at a time.
+
+sidetrack removes that step. Each git branch gets a real database named after it (`feature/a` → `feature_a_db`). When you switch branches, sidetrack switches which database your app uses. Nothing is undone, so it works even with tools that have no down migrations.
+
+```text
+$ git checkout feature/a
+Switched to branch 'feature/a'
+
+Switch DB from feature_b_db to feature_a_db for feature/a
+Plan:
+   1. Point DATABASE_URL in .env at feature_a_db (was feature_b_db)
+   2. Recreate api
+Apply? [Y]es / [n]o / [a]lways for this repo
+```
+
+Status: **v1, Postgres only.** See [`docs/spec-v1.md`](docs/spec-v1.md) for the full spec and [`docs/plan-v1.md`](docs/plan-v1.md) for how it's built.
+
+## Requirements
+
+- Your database runs in **Docker Compose** (Postgres 13+; 15+ copies faster, 18 can copy-on-write).
+- Your app reads its database name from an **untracked env file** (e.g. `DATABASE_URL` in `.env`).
+- `git` and `docker compose` on your PATH. No Postgres client is needed on the host.
+
+## Install
+
+```bash
+cargo install --path crates/sidetrack
+```
+
+## Quick start
+
+From your project, with the database container running:
+
+```bash
+sidetrack init
+```
+
+`init` reads your compose setup and shows what it found. That's the database service and user, the env file and variable that hold the DB name, the migration tool, and the container it runs in. It then writes `sidetrack.toml` (safe to commit, no secrets), links the current branch to the current database, and offers to install the git hook.
+
+After that, just use git. When you check out a branch, the hook shows a plan and asks before doing anything. Without a terminal (VS Code, other git GUIs) it prints a one-line hint instead of prompting:
+
+```text
+sidetrack: Create feature_c_db for feature/c and switch to it (from app_dev) — run `sidetrack switch` to apply
+```
+
+## How it works
+
+- **Switching to a branch that has a DB branch:** rewrites the DB name in your env file, recreates the app containers, then runs any migrations the branch has that the database doesn't.
+- **Switching to a branch for the first time:** copies the closest compatible database, then migrates forward. "Compatible" means it holds no migration the new branch doesn't know, judged from the migration files in git, so it works with any migration tool. It picks the copy that needs the fewest migrations run. If nothing is compatible, it builds from an empty database (and runs your seed command, if configured).
+- **Copies** use Postgres template databases (`CREATE DATABASE … TEMPLATE`), so there's no dump and restore. Postgres needs nothing connected to the source while copying, so sidetrack stops the app services first when the source is the database in use.
+- **Every change is a plan first.** `--dry-run` shows it, `--json` prints it for scripts, and if a step fails, completed steps are undone. The one exception is your own migration command failing: the new database then stays selected so you can debug it.
+- **State** lives in a small SQLite registry (`~/.local/share/sidetrack/registry.sqlite`). The database server is treated as the truth, and mismatches are shown, never silently fixed.
+
+## Commands
+
+| Command | What it does |
+|---|---|
+| `sidetrack init` | Detect the setup, write `sidetrack.toml`, link the current branch to the current DB, offer the hook |
+| `sidetrack status` | Current branch, active database, and what `switch` would do |
+| `sidetrack list` | DB branches and snapshots with size, migration count and last use |
+| `sidetrack switch [branch]` | Switch the database (default: the checked-out branch) |
+| `sidetrack create <branch> [--from X \| --empty]` | Create a DB branch without switching to it |
+| `sidetrack snapshot [label]` | Freeze a copy of the active database |
+| `sidetrack snapshot list` / `snapshot rm <name>` | Manage snapshots |
+| `sidetrack reset [--to <snapshot> \| --parent]` | Replace the active database with a fresh copy (default: latest snapshot, else parent) |
+| `sidetrack delete <branch>` | Drop a DB branch and its snapshots |
+| `sidetrack gc` | Drop DB branches whose git branch was deleted or merged |
+| `sidetrack hook install` / `uninstall` | Manage the `post-checkout` hook |
+| `sidetrack doctor` | Check Docker, Postgres, the env file, the hook and more |
+
+Global flags: `--dry-run`, `--json`, `--yes`, `-v` (show registry bookkeeping steps), `-C <dir>`.
+
+Answering **[a]lways** applies future non-destructive plans in that repo without asking (stored on your machine, not in `sidetrack.toml`). Plans that drop data always ask. Set `SIDETRACK_SKIP=1` to skip the hook for one command.
+
+## Configuration
+
+`sidetrack init` writes this for you. Every field can be edited.
+
+```toml
+[database]
+engine = "postgres"
+service = "db"            # compose service running Postgres
+user = "app"              # needs CREATEDB (the image's POSTGRES_USER is a superuser)
+# psql = ["psql", "-h", "localhost", "-U", "app"]   # optional: run psql another way
+
+[routing]
+mode = "env"
+file = ".env"             # must not be tracked by git
+variable = "DATABASE_URL" # a URL (DB name = its path) or a bare DB name
+restart = ["api", "worker"]
+
+[migrations]
+tool = "alembic"
+dirs = ["alembic/versions"]                      # one file/folder per migration
+command = "docker compose exec -T api alembic upgrade head"
+# seed = "docker compose exec -T api python -m app.seed"   # after building from empty
+
+[git]
+main_branch = "main"      # used by `gc` to find merged branches
+```
+
+Detected migration tools: Alembic, Django, Prisma, Rails, Flyway and Knex. Anything else works too: point `dirs` at the migration folder(s) and set `command`.
+
+## Limitations (v1)
+
+- **Postgres only.** MySQL/MariaDB is next, then SQL Server and Oracle (see the spec's phasing).
+- **Routing by env file.** The app is recreated on each switch. A local proxy that needs no restarts is planned for v2.
+- **Migration state comes from file names in git.** sidetrack doesn't read your tool's version table yet. If you run migrations yourself, its record can lag behind. The only effect is that a later `switch` may run your migration command when there's nothing new to apply, which is harmless.
+- **Every DB branch is a full copy** unless you're on Postgres 18 with a copy-on-write filesystem. Use `gc` and `delete` to reclaim space.
+- **One database service per project.**
+
+## Development
+
+```bash
+cargo test                       # unit tests; Postgres tests skip without a server
+SIDETRACK_TEST_PG="docker exec -i <container> psql -U postgres" cargo test   # include them
+tests/e2e/run.sh                 # full scenario in Docker (spec §1)
+```
+
+Layout:
+
+```text
+crates/sidetrack-core   all logic: naming, config, registry, git, compose, detection,
+                        Postgres engine, planner, applier
+crates/sidetrack        the CLI and git hook
+tests/e2e               a compose fixture and the end-to-end script
+```

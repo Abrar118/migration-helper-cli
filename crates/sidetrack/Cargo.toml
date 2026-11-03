@@ -1,0 +1,20 @@
+[package]
+name = "sidetrack"
+description = "Give every git branch its own local database"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[[bin]]
+name = "sidetrack"
+path = "src/main.rs"
+
+[dependencies]
+sidetrack-core = { path = "../sidetrack-core" }
+anyhow.workspace = true
+serde_json.workspace = true
+clap.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true

@@ -1,0 +1,19 @@
+# sidetrack configuration for the e2e fixture.
+[database]
+engine = "postgres"
+service = "db"
+user = "app"
+
+[routing]
+mode = "env"
+file = ".env"
+variable = "DATABASE_URL"
+restart = ["api"]
+
+[migrations]
+tool = "generic"
+dirs = ["migrations"]
+command = "docker compose exec -T api sh /app/migrate.sh"
+
+[git]
+main_branch = "main"
