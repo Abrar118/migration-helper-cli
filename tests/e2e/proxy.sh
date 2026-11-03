@@ -16,16 +16,16 @@ proj="$work/proxy_shop"
 mkdir -p "$proj"
 export SIDETRACK_REGISTRY="$work/registry.sqlite"
 cd "$proj"
-proxy_pid=""
+plog="$proj/.git/sidetrack-proxy.log"
 cleanup() {
-  [ -n "$proxy_pid" ] && kill "$proxy_pid" 2>/dev/null || true
+  "$st" -C "$proj" proxy --stop >/dev/null 2>&1 || true
   docker compose down -v --remove-orphans >/dev/null 2>&1 || true
   rm -rf "$work"
 }
 trap cleanup EXIT
 
 step() { printf '\n\033[1m== %s\033[0m\n' "$*"; }
-fail() { echo "FAIL: $*" >&2; [ -f "$work/proxy.log" ] && cat "$work/proxy.log" >&2; exit 1; }
+fail() { echo "FAIL: $*" >&2; [ -f "$plog" ] && cat "$plog" >&2; exit 1; }
 # psql inside the app container, through the proxy, as the app would connect.
 app_sql() { docker compose exec -T api sh -c 'psql "$DATABASE_URL" -qtAX -c "$0"' "$1"; }
 
@@ -75,10 +75,10 @@ git config user.name e2e
 git add -A
 git commit -qm "proxy project"
 docker compose up -d --wait >/dev/null
-"$st" proxy >"$work/proxy.log" 2>&1 &
-proxy_pid=$!
-for _ in $(seq 1 50); do grep -q "sidetrack proxy: 0.0.0.0:54329" "$work/proxy.log" && break; sleep 0.1; done
-grep -q "127.0.0.1:55433" "$work/proxy.log" || fail "the proxy should find the published port"
+"$st" proxy --daemon | tee "$work/daemon.txt"
+grep -q "Proxy running on 0.0.0.0:54329" "$work/daemon.txt" || fail "proxy --daemon should start it"
+"$st" proxy --daemon | grep -q "already running" || fail "a second --daemon should notice the first"
+grep -q "127.0.0.1:55433" "$plog" || fail "the proxy should find the published port"
 docker compose exec -T api sh /app/migrate.sh >/dev/null
 "$st" init --yes --no-hook
 [ "$(app_sql 'select current_database()')" = app_dev ] || fail "app should start on app_dev"
@@ -103,7 +103,7 @@ if grep -q "Recreate" "$work/main.txt"; then fail "proxy mode shouldn't recreate
 [ "$(app_sql 'select current_database()')" = app_dev ] || fail "app should be back on app_dev"
 for _ in $(seq 1 30); do kill -0 "$held" 2>/dev/null || break; sleep 0.2; done
 if kill -0 "$held" 2>/dev/null; then fail "the open connection to feature_a_db should have been closed"; fi
-grep -q "closed 1 connection" "$work/proxy.log" || fail "proxy should log the closed connection"
+grep -q "closed 1 connection" "$plog" || fail "proxy should log the closed connection"
 
 step "status and doctor know about the proxy"
 "$st" status | tee "$work/status.txt"
@@ -111,7 +111,8 @@ grep -q "Proxy:       app_dev on 0.0.0.0:54329" "$work/status.txt" || fail "stat
 "$st" doctor | tee "$work/doctor.txt" || true   # exits 1: no git hook here
 grep -q "proxy upstream" "$work/doctor.txt" || fail "doctor should check the proxy"
 
-kill "$proxy_pid"; wait "$proxy_pid" 2>/dev/null || true; proxy_pid=""
+"$st" proxy --stop | grep -q "Stopped the proxy" || fail "proxy --stop should stop it"
+sleep 0.5
 "$st" switch feature/a --yes --dry-run | tee "$work/down.txt"
 grep -q "the proxy isn't running" "$work/down.txt" || fail "plans should warn when the proxy is down"
 

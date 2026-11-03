@@ -10,7 +10,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 - `docs/spec-v1.md` is the product spec. Requirement IDs like `P0.6` are referenced from code comments.
 - `docs/plan-v1.md` is the build plan, plus a "Decisions" list. Read it before changing behaviour: several rules there exist because of bugs.
-- `docs/handoff.md` is the current state and what to do next (the v2 local proxy design). Start there when resuming work.
+- `docs/handoff.md` is the current state and what to do next. Start there when resuming work.
 
 ## Commands
 
@@ -97,6 +97,7 @@ Detection is a pure function of those models plus the repo files, so tests feed 
 - After that it only relays bytes, so authentication passes through untouched.
 - A watcher polls the target file, and when the target changes it closes the app's connections to the old database.
 - Plans use `Step::SetProxyTarget` instead of `RewriteEnv`. They restart only the services that were stopped for a copy.
+- `sidetrack proxy --daemon` re-runs the binary in the background (pid and log in `.git/`); `--stop` kills it. `init --proxy` writes proxy-mode config (`RoutingConfig::use_proxy`).
 - Tests use a fake upstream (unit) and `tests/e2e/proxy.sh` (real Docker).
 
 ### Naming (`naming.rs`)

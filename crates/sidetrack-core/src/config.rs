@@ -85,6 +85,15 @@ impl RoutingConfig {
     pub fn listen_addr(&self) -> &str {
         self.listen.as_deref().unwrap_or(DEFAULT_PROXY_LISTEN)
     }
+
+    /// Switch to proxy mode, with the app connecting to `app_db`. The env file
+    /// settings are dropped: in proxy mode the app's URL never changes.
+    pub fn use_proxy(&mut self, app_db: &str) {
+        self.mode = "proxy".into();
+        self.database = Some(app_db.to_string());
+        self.file.clear();
+        self.variable.clear();
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -258,6 +267,16 @@ mod tests {
         cfg.routing.variable.clear();
         cfg.validate().unwrap();
         assert_eq!(cfg.routing.listen_addr(), DEFAULT_PROXY_LISTEN);
+
+        let mut cfg = sample();
+        cfg.routing.use_proxy("app_dev");
+        cfg.validate().unwrap();
+        let text = cfg.to_toml().unwrap();
+        assert!(text.contains("mode = \"proxy\""), "{text}");
+        assert!(
+            !text.contains("variable"),
+            "env settings are dropped:\n{text}"
+        );
     }
 
     #[test]

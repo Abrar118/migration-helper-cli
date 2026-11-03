@@ -75,7 +75,8 @@ sidetrack: Create feature_c_db for feature/c and switch to it (from app_dev) —
 | `sidetrack hook install` / `uninstall` | Manage the `post-checkout` hook |
 | `sidetrack rename <old> <new>` | Follow `git branch -m`: move the DB branch to the new name |
 | `sidetrack bench [--from X]` | Time a copy of a database here (then delete the copy) and estimate copy times for bigger ones |
-| `sidetrack proxy [--listen ADDR]` | Run the local proxy (proxy mode). Stays in the foreground |
+| `sidetrack proxy [--listen ADDR]` | Run the local proxy (proxy mode) in the foreground |
+| `sidetrack proxy --daemon` / `--stop` | Start the proxy in the background (log and pid in `.git/`) / stop it |
 | `sidetrack doctor` | Check Docker, Postgres, disk space, the env file, the hook and more |
 
 Global flags: `--dry-run`, `--json`, `--yes`, `-v` (show registry bookkeeping steps), `-C <dir>`.
@@ -138,7 +139,8 @@ services:
     extra_hosts: ["host.docker.internal:host-gateway"]  # needed on Linux
 ```
 
-- **Running it:** start the proxy with `sidetrack proxy` and keep it running. A switch then only changes where `app_dev` goes. The proxy closes the app's open connections to the old database, so its connection pool reconnects to the new one.
+- **Setting it up:** `sidetrack init --proxy` writes this config for you. It reads the app's database name from your env file, then tells you what to change in the app's URL (that's a one-time edit).
+- **Running it:** start the proxy with `sidetrack proxy --daemon` (or `sidetrack proxy` in its own terminal), and stop it with `sidetrack proxy --stop`. A switch then only changes where `app_dev` goes. The proxy closes the app's open connections to the old database, so its connection pool reconnects to the new one.
 - **Other databases:** connections to any other name pass through unchanged.
 - **Encryption:** the proxy doesn't speak TLS. Use `sslmode=prefer` (the default) or `disable`.
 - **Linux:** when the app runs in a container, listen on `0.0.0.0` (or the Docker bridge address), not `127.0.0.1`.
