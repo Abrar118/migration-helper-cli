@@ -8,6 +8,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 - `docs/spec-v1.md` is the product spec. Requirement IDs like `P0.6` are referenced from code comments.
 - `docs/plan-v1.md` is the build plan, plus a "Decisions" list. Read it before changing behaviour: several rules there exist because of bugs.
+- `docs/handoff.md` is the current state and what to do next (the v2 local proxy design). Start there when resuming work.
 
 ## Commands
 
