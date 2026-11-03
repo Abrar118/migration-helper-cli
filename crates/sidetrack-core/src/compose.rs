@@ -30,7 +30,10 @@ pub enum ConfigView {
 
 impl Compose {
     pub fn new(dir: impl Into<PathBuf>, files: Vec<PathBuf>) -> Self {
-        Self { dir: dir.into(), files }
+        Self {
+            dir: dir.into(),
+            files,
+        }
     }
 
     pub fn dir(&self) -> &Path {
@@ -74,8 +77,15 @@ impl Compose {
     }
 
     pub fn running_services(&self) -> Result<Vec<String>> {
-        let out = capture(self.command().args(["ps", "--services", "--status", "running"]))?;
-        Ok(out.lines().map(str::to_string).filter(|l| !l.is_empty()).collect())
+        let out = capture(
+            self.command()
+                .args(["ps", "--services", "--status", "running"]),
+        )?;
+        Ok(out
+            .lines()
+            .map(str::to_string)
+            .filter(|l| !l.is_empty())
+            .collect())
     }
 
     pub fn stop(&self, services: &[String]) -> Result<()> {
@@ -90,7 +100,10 @@ impl Compose {
         if services.is_empty() {
             return Ok(());
         }
-        run(self.command().args(["up", "-d", "--no-deps", "--force-recreate"]).args(services))
+        run(self
+            .command()
+            .args(["up", "-d", "--no-deps", "--force-recreate"])
+            .args(services))
     }
 
     /// Run a command in a running service and capture stdout.
@@ -170,7 +183,10 @@ impl Service {
     /// Names of services this one depends on (list or map form).
     pub fn depends_on(&self) -> Vec<String> {
         match &self.depends_on {
-            Value::Array(items) => items.iter().filter_map(|v| v.as_str().map(str::to_string)).collect(),
+            Value::Array(items) => items
+                .iter()
+                .filter_map(|v| v.as_str().map(str::to_string))
+                .collect(),
             Value::Object(map) => map.keys().cloned().collect(),
             _ => vec![],
         }
@@ -218,12 +234,22 @@ mod tests {
         let m = ComposeModel::from_json(JSON).unwrap();
         assert_eq!(m.name, "shop");
         let api = &m.services["api"];
-        assert_eq!(api.env("DATABASE_URL"), Some("postgresql://app:s@db:5432/app_dev"));
+        assert_eq!(
+            api.env("DATABASE_URL"),
+            Some("postgresql://app:s@db:5432/app_dev")
+        );
         assert_eq!(api.env("EMPTY"), None);
         assert_eq!(api.env_file[0].path, "/repo/.env.local");
         assert_eq!(api.depends_on(), ["db"]);
         assert_eq!(m.services["worker"].depends_on(), ["db"]);
-        assert_eq!(api.host_paths().len(), 2, "build context + bind mount, not the named volume");
-        assert_eq!(m.services["db"].image.as_deref(), Some("postgres:16-alpine"));
+        assert_eq!(
+            api.host_paths().len(),
+            2,
+            "build context + bind mount, not the named volume"
+        );
+        assert_eq!(
+            m.services["db"].image.as_deref(),
+            Some("postgres:16-alpine")
+        );
     }
 }

@@ -42,7 +42,9 @@ pub fn files_at(git: &Git, rev: &str, dirs: &[String]) -> Result<FileSet> {
 pub fn files_in_worktree(root: &Path, dirs: &[String]) -> Result<FileSet> {
     let mut out = FileSet::new();
     for dir in dirs {
-        let Ok(entries) = std::fs::read_dir(root.join(dir)) else { continue };
+        let Ok(entries) = std::fs::read_dir(root.join(dir)) else {
+            continue;
+        };
         for e in entries.flatten() {
             let name = e.file_name().to_string_lossy().into_owned();
             if is_migration_entry(&name) {
@@ -166,11 +168,19 @@ mod tests {
         git(&repo, &["checkout", "-q", "feature/c"]);
 
         let target = current_files(&repo, &dirs).unwrap();
-        assert_eq!(target, set(&["migrations/001_users.sql", "migrations/002_c.sql"]));
+        assert_eq!(
+            target,
+            set(&["migrations/001_users.sql", "migrations/002_c.sql"])
+        );
 
         let dev_now = files_at(&repo, "dev", &dirs).unwrap();
         let cands = [
-            Candidate { files: dev_now.clone(), applied: dev_now, recency: 10, ..cand("dev_db", &[], 0) },
+            Candidate {
+                files: dev_now.clone(),
+                applied: dev_now,
+                recency: 10,
+                ..cand("dev_db", &[], 0)
+            },
             Candidate {
                 kind: CandidateKind::Snapshot,
                 files: set(&["migrations/001_users.sql"]),

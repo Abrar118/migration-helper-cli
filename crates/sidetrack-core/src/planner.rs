@@ -64,11 +64,18 @@ impl<'a> Planner<'a> {
     }
 
     fn size(&self, db: &str) -> u64 {
-        self.world.server_dbs.get(db).map(|d| d.size_bytes).unwrap_or(0)
+        self.world
+            .server_dbs
+            .get(db)
+            .map(|d| d.size_bytes)
+            .unwrap_or(0)
     }
 
     pub fn branch_for_git(&self, git_branch: &str) -> Option<&'a DbBranch> {
-        self.world.branches.iter().find(|b| b.git_branch == git_branch)
+        self.world
+            .branches
+            .iter()
+            .find(|b| b.git_branch == git_branch)
     }
 
     pub fn branch_for_db(&self, db: &str) -> Option<&'a DbBranch> {
@@ -124,14 +131,21 @@ impl<'a> Planner<'a> {
         }
         for s in &self.world.snapshots {
             if !self.live(&s.db_name) {
-                w.push(format!("snapshot {} is in the registry but not on the server", s.db_name));
+                w.push(format!(
+                    "snapshot {} is in the registry but not on the server",
+                    s.db_name
+                ));
             }
         }
         if let Some(active) = &self.world.active_db {
             if !self.live(active) {
-                w.push(format!("the app points at {active}, which doesn't exist on the server"));
+                w.push(format!(
+                    "the app points at {active}, which doesn't exist on the server"
+                ));
             } else if self.branch_for_db(active).is_none() {
-                w.push(format!("the app points at {active}, which no git branch is linked to"));
+                w.push(format!(
+                    "the app points at {active}, which no git branch is linked to"
+                ));
             }
         }
         w
@@ -160,7 +174,11 @@ impl<'a> Planner<'a> {
             // A larger set only makes the candidate less likely to be picked.
             let mut files = b.migration_files.clone();
             if self.git.branch_exists(&b.git_branch)? {
-                files.extend(migrations::files_at(self.git, &b.git_branch, &self.cfg.migrations.dirs)?);
+                files.extend(migrations::files_at(
+                    self.git,
+                    &b.git_branch,
+                    &self.cfg.migrations.dirs,
+                )?);
             }
             out.push(Candidate {
                 db_name: b.db_name.clone(),
@@ -216,8 +234,15 @@ impl<'a> Planner<'a> {
 
     /// `--from` accepts a git branch, a DB branch name or a snapshot name/label.
     fn explicit_base(&self, from: &str) -> Result<Base> {
-        if let Some(b) = self.branch_for_git(from).or_else(|| self.branch_for_db(from)) {
-            anyhow::ensure!(self.live(&b.db_name), "{} doesn't exist on the server", b.db_name);
+        if let Some(b) = self
+            .branch_for_git(from)
+            .or_else(|| self.branch_for_db(from))
+        {
+            anyhow::ensure!(
+                self.live(&b.db_name),
+                "{} doesn't exist on the server",
+                b.db_name
+            );
             return Ok(Base {
                 db_name: b.db_name.clone(),
                 applied: b.migration_files.clone(),
@@ -245,7 +270,10 @@ impl<'a> Planner<'a> {
     /// DB name for a new branch, avoiding names used by other branches or unknown databases.
     fn choose_name(&self, git_branch: &str) -> Result<String> {
         let taken = |name: &str| {
-            self.world.branches.iter().any(|b| b.db_name == name && b.git_branch != git_branch)
+            self.world
+                .branches
+                .iter()
+                .any(|b| b.db_name == name && b.git_branch != git_branch)
                 || (self.live(name) && self.branch_for_db(name).is_none())
                 || self.world.snapshots.iter().any(|s| s.db_name == name)
         };
@@ -288,25 +316,33 @@ impl<'a> Planner<'a> {
                     }
                 } else {
                     self.ensure_env_writable()?;
-                    plan.summary = format!("Switch DB from {active} to {} for {git_branch}", b.db_name);
+                    plan.summary =
+                        format!("Switch DB from {active} to {} for {git_branch}", b.db_name);
                     self.push_route(&mut plan, &active, &b.db_name, &self.running_app_services());
                     if !pending.is_empty() {
                         self.push_migrations(&mut plan, &b.db_name, pending, &target);
                     }
                 }
-                plan.push(Step::TouchBranch { db_name: b.db_name.clone() });
+                plan.push(Step::TouchBranch {
+                    db_name: b.db_name.clone(),
+                });
             }
             existing => {
                 self.ensure_env_writable()?;
                 if let Some(b) = existing {
-                    plan.push(Step::ForgetBranch { db_name: b.db_name.clone() });
+                    plan.push(Step::ForgetBranch {
+                        db_name: b.db_name.clone(),
+                    });
                 }
                 let name = match existing {
                     Some(b) if !self.live(&b.db_name) => b.db_name.clone(),
                     _ => self.choose_name(git_branch)?,
                 };
-                plan.summary = format!("Create {name} for {git_branch} and switch to it (from {active})");
-                self.push_new_branch(&mut plan, git_branch, &name, &active, &target, None, false, true)?;
+                plan.summary =
+                    format!("Create {name} for {git_branch} and switch to it (from {active})");
+                self.push_new_branch(
+                    &mut plan, git_branch, &name, &active, &target, None, false, true,
+                )?;
             }
         }
         Ok(plan)
@@ -326,19 +362,28 @@ impl<'a> Planner<'a> {
                 self.cfg.routing.restart.join(", ")
             ));
         } else {
-            plan.push(Step::StartServices { services: services.to_vec() });
+            plan.push(Step::StartServices {
+                services: services.to_vec(),
+            });
         }
     }
 
     fn push_migrations(&self, plan: &mut Plan, db: &str, pending: Vec<String>, target: &FileSet) {
-        if self.running_app_services().is_empty() && self.cfg.migrations.command.contains(" exec ") {
+        if self.running_app_services().is_empty() && self.cfg.migrations.command.contains(" exec ")
+        {
             plan.warnings.push(format!(
                 "migrations run with `docker compose exec`, but {} isn't running",
                 self.cfg.routing.restart.join(", ")
             ));
         }
-        plan.push(Step::RunMigrations { command: self.cfg.migrations.command.clone(), pending });
-        plan.push(Step::RecordMigrations { db_name: db.to_string(), migration_files: target.clone() });
+        plan.push(Step::RunMigrations {
+            command: self.cfg.migrations.command.clone(),
+            pending,
+        });
+        plan.push(Step::RecordMigrations {
+            db_name: db.to_string(),
+            migration_files: target.clone(),
+        });
     }
 
     /// Copy (or create) a database for `git_branch`, register it and optionally switch to it.
@@ -361,7 +406,11 @@ impl<'a> Planner<'a> {
         } else {
             self.auto_base(target)?
         };
-        let base_commit = if self.git.branch_exists(git_branch)? { self.git.resolve(git_branch)? } else { None };
+        let base_commit = if self.git.branch_exists(git_branch)? {
+            self.git.resolve(git_branch)?
+        } else {
+            None
+        };
         let running = self.running_app_services();
 
         let applied = match &base {
@@ -369,7 +418,9 @@ impl<'a> Planner<'a> {
                 plan.notes.push(base.why.clone());
                 let stop = base.db_name == active && !running.is_empty();
                 if stop {
-                    plan.push(Step::StopServices { services: running.clone() });
+                    plan.push(Step::StopServices {
+                        services: running.clone(),
+                    });
                 }
                 self.push_terminate(plan, &base.db_name, stop);
                 plan.push(Step::CloneDatabase {
@@ -385,7 +436,9 @@ impl<'a> Planner<'a> {
                     migration_files: base.applied.clone(),
                 });
                 if stop && !switch_to {
-                    plan.push(Step::StartServices { services: running.clone() });
+                    plan.push(Step::StartServices {
+                        services: running.clone(),
+                    });
                 }
                 base.applied.clone()
             }
@@ -396,7 +449,9 @@ impl<'a> Planner<'a> {
                             .to_string(),
                     );
                 }
-                plan.push(Step::CreateEmptyDatabase { name: name.to_string() });
+                plan.push(Step::CreateEmptyDatabase {
+                    name: name.to_string(),
+                });
                 plan.push(Step::RegisterBranch {
                     git_branch: git_branch.to_string(),
                     db_name: name.to_string(),
@@ -416,10 +471,14 @@ impl<'a> Planner<'a> {
             }
             if base.is_none() {
                 if let Some(seed) = &self.cfg.migrations.seed {
-                    plan.push(Step::RunSeed { command: seed.clone() });
+                    plan.push(Step::RunSeed {
+                        command: seed.clone(),
+                    });
                 }
             }
-            plan.push(Step::TouchBranch { db_name: name.to_string() });
+            plan.push(Step::TouchBranch {
+                db_name: name.to_string(),
+            });
         } else if !migrations::pending(target, &applied).is_empty() {
             plan.notes.push(format!(
                 "{} migration(s) will run when you switch to {git_branch}",
@@ -434,9 +493,13 @@ impl<'a> Planner<'a> {
     fn push_terminate(&self, plan: &mut Plan, db: &str, app_stopped: bool) {
         if let Some(sessions) = self.world.connections.get(db) {
             if !sessions.is_empty() {
-                plan.push(Step::TerminateConnections { db: db.to_string(), sessions: sessions.clone() });
+                plan.push(Step::TerminateConnections {
+                    db: db.to_string(),
+                    sessions: sessions.clone(),
+                });
                 if app_stopped {
-                    plan.notes.push("sessions from the stopped services close on their own".to_string());
+                    plan.notes
+                        .push("sessions from the stopped services close on their own".to_string());
                 }
             }
         }
@@ -456,9 +519,13 @@ impl<'a> Planner<'a> {
         let mut plan = Plan::new(PlanKind::Create, format!("Create {name} for {git_branch}"));
         plan.warnings = self.reconcile();
         if let Some(b) = self.branch_for_git(git_branch) {
-            plan.push(Step::ForgetBranch { db_name: b.db_name.clone() });
+            plan.push(Step::ForgetBranch {
+                db_name: b.db_name.clone(),
+            });
         }
-        self.push_new_branch(&mut plan, git_branch, &name, &active, &target, from, empty, false)?;
+        self.push_new_branch(
+            &mut plan, git_branch, &name, &active, &target, from, empty, false,
+        )?;
         Ok(plan)
     }
 
@@ -466,24 +533,35 @@ impl<'a> Planner<'a> {
 
     fn active_branch(&self) -> Result<&'a DbBranch> {
         let active = self.active()?;
-        self.branch_for_db(active)
-            .with_context(|| format!("{active} isn't linked to a git branch; run `sidetrack init` or `sidetrack switch`"))
+        self.branch_for_db(active).with_context(|| {
+            format!(
+                "{active} isn't linked to a git branch; run `sidetrack init` or `sidetrack switch`"
+            )
+        })
     }
 
     pub fn snapshot(&self, label: Option<&str>, next_seq: i64) -> Result<Plan> {
         let b = self.active_branch()?;
         if let Some(l) = label {
             anyhow::ensure!(
-                self.world.snapshots.iter().all(|s| s.label.as_deref() != Some(l)),
+                self.world
+                    .snapshots
+                    .iter()
+                    .all(|s| s.label.as_deref() != Some(l)),
                 "a snapshot labelled {l:?} already exists"
             );
         }
         let name = naming::snapshot_db_name(&b.db_name, next_seq);
-        let mut plan = Plan::new(PlanKind::Snapshot, format!("Snapshot {} as {name}", b.db_name));
+        let mut plan = Plan::new(
+            PlanKind::Snapshot,
+            format!("Snapshot {} as {name}", b.db_name),
+        );
         plan.warnings = self.reconcile();
         let running = self.running_app_services();
         if !running.is_empty() {
-            plan.push(Step::StopServices { services: running.clone() });
+            plan.push(Step::StopServices {
+                services: running.clone(),
+            });
         }
         self.push_terminate(&mut plan, &b.db_name, !running.is_empty());
         plan.push(Step::CloneDatabase {
@@ -509,11 +587,18 @@ impl<'a> Planner<'a> {
 
     pub fn snapshot_remove(&self, name: &str) -> Result<Plan> {
         let s = self.find_snapshot(name)?;
-        let mut plan = Plan::new(PlanKind::SnapshotRemove, format!("Delete snapshot {}", s.db_name));
+        let mut plan = Plan::new(
+            PlanKind::SnapshotRemove,
+            format!("Delete snapshot {}", s.db_name),
+        );
         if self.live(&s.db_name) {
-            plan.push(Step::DropDatabase { name: s.db_name.clone() });
+            plan.push(Step::DropDatabase {
+                name: s.db_name.clone(),
+            });
         }
-        plan.push(Step::ForgetSnapshot { db_name: s.db_name.clone() });
+        plan.push(Step::ForgetSnapshot {
+            db_name: s.db_name.clone(),
+        });
         Ok(plan)
     }
 
@@ -521,7 +606,12 @@ impl<'a> Planner<'a> {
 
     pub fn reset(&self, to: &ResetTo) -> Result<Plan> {
         let b = self.active_branch()?;
-        let own_latest = || self.world.snapshots.iter().find(|s| s.branch_id == b.id && self.live(&s.db_name));
+        let own_latest = || {
+            self.world
+                .snapshots
+                .iter()
+                .find(|s| s.branch_id == b.id && self.live(&s.db_name))
+        };
         let parent = || {
             b.parent_id
                 .and_then(|id| self.branch_by_id(id))
@@ -533,7 +623,9 @@ impl<'a> Planner<'a> {
                 (s.db_name.clone(), s.migration_files.clone())
             }
             ResetTo::Parent => {
-                let p = parent().with_context(|| format!("{} has no parent DB branch on the server", b.db_name))?;
+                let p = parent().with_context(|| {
+                    format!("{} has no parent DB branch on the server", b.db_name)
+                })?;
                 (p.db_name.clone(), p.migration_files.clone())
             }
             ResetTo::Latest => match (own_latest(), parent()) {
@@ -546,22 +638,41 @@ impl<'a> Planner<'a> {
         anyhow::ensure!(self.live(&source), "{source} doesn't exist on the server");
 
         let tmp = naming::temp_db_name(&b.db_name);
-        let mut plan = Plan::new(PlanKind::Reset, format!("Reset {} to a fresh copy of {source}", b.db_name));
+        let mut plan = Plan::new(
+            PlanKind::Reset,
+            format!("Reset {} to a fresh copy of {source}", b.db_name),
+        );
         plan.warnings = self.reconcile();
         if self.live(&tmp) {
-            plan.warnings.push(format!("{tmp} is left over from an earlier reset and will be replaced"));
+            plan.warnings.push(format!(
+                "{tmp} is left over from an earlier reset and will be replaced"
+            ));
             plan.push(Step::DropDatabase { name: tmp.clone() });
         }
         let running = self.running_app_services();
         if !running.is_empty() {
-            plan.push(Step::StopServices { services: running.clone() });
+            plan.push(Step::StopServices {
+                services: running.clone(),
+            });
         }
         self.push_terminate(&mut plan, &source, false);
-        plan.push(Step::CloneDatabase { source: source.clone(), target: tmp.clone(), size_bytes: self.size(&source) });
+        plan.push(Step::CloneDatabase {
+            source: source.clone(),
+            target: tmp.clone(),
+            size_bytes: self.size(&source),
+        });
         self.push_terminate(&mut plan, &b.db_name, !running.is_empty());
-        plan.push(Step::DropDatabase { name: b.db_name.clone() });
-        plan.push(Step::RenameDatabase { from: tmp, to: b.db_name.clone() });
-        plan.push(Step::RecordMigrations { db_name: b.db_name.clone(), migration_files: files.clone() });
+        plan.push(Step::DropDatabase {
+            name: b.db_name.clone(),
+        });
+        plan.push(Step::RenameDatabase {
+            from: tmp,
+            to: b.db_name.clone(),
+        });
+        plan.push(Step::RecordMigrations {
+            db_name: b.db_name.clone(),
+            migration_files: files.clone(),
+        });
         if !running.is_empty() {
             plan.push(Step::StartServices { services: running });
         }
@@ -574,7 +685,9 @@ impl<'a> Planner<'a> {
                 }
             }
         }
-        plan.push(Step::TouchBranch { db_name: b.db_name.clone() });
+        plan.push(Step::TouchBranch {
+            db_name: b.db_name.clone(),
+        });
         Ok(plan)
     }
 
@@ -586,11 +699,20 @@ impl<'a> Planner<'a> {
             .or_else(|| self.branch_for_db(name))
             .with_context(|| format!("no DB branch for {name}"))?;
         if self.world.active_db.as_deref() == Some(b.db_name.as_str()) {
-            bail!("{} is the active database; switch to another branch first", b.db_name);
+            bail!(
+                "{} is the active database; switch to another branch first",
+                b.db_name
+            );
         }
-        let mut plan = Plan::new(PlanKind::Delete, format!("Delete {} (git branch {})", b.db_name, b.git_branch));
+        let mut plan = Plan::new(
+            PlanKind::Delete,
+            format!("Delete {} (git branch {})", b.db_name, b.git_branch),
+        );
         if b.adopted {
-            plan.warnings.push(format!("{} existed before sidetrack (it was adopted at init)", b.db_name));
+            plan.warnings.push(format!(
+                "{} existed before sidetrack (it was adopted at init)",
+                b.db_name
+            ));
         }
         self.push_delete_branch(&mut plan, b);
         Ok(plan)
@@ -599,20 +721,31 @@ impl<'a> Planner<'a> {
     fn push_delete_branch(&self, plan: &mut Plan, b: &DbBranch) {
         for s in self.world.snapshots.iter().filter(|s| s.branch_id == b.id) {
             if self.live(&s.db_name) {
-                plan.push(Step::DropDatabase { name: s.db_name.clone() });
+                plan.push(Step::DropDatabase {
+                    name: s.db_name.clone(),
+                });
             }
-            plan.push(Step::ForgetSnapshot { db_name: s.db_name.clone() });
+            plan.push(Step::ForgetSnapshot {
+                db_name: s.db_name.clone(),
+            });
         }
         if self.live(&b.db_name) {
-            plan.push(Step::DropDatabase { name: b.db_name.clone() });
+            plan.push(Step::DropDatabase {
+                name: b.db_name.clone(),
+            });
         }
-        plan.push(Step::ForgetBranch { db_name: b.db_name.clone() });
+        plan.push(Step::ForgetBranch {
+            db_name: b.db_name.clone(),
+        });
     }
 
     // ---------------------------------------------------------------------- gc
 
     pub fn gc(&self) -> Result<Plan> {
-        let mut plan = Plan::new(PlanKind::Gc, "Clean up DB branches whose git branch is gone or merged".to_string());
+        let mut plan = Plan::new(
+            PlanKind::Gc,
+            "Clean up DB branches whose git branch is gone or merged".to_string(),
+        );
         let merged: Vec<String> = match &self.cfg.git.main_branch {
             Some(main) if self.git.branch_exists(main)? => self.git.merged_into(main)?,
             _ => vec![],
@@ -639,7 +772,8 @@ impl<'a> Planner<'a> {
             } else {
                 "merged"
             };
-            plan.notes.push(format!("{} ({}): {why}", b.db_name, b.git_branch));
+            plan.notes
+                .push(format!("{} ({}): {why}", b.db_name, b.git_branch));
             freed += self.size(&b.db_name);
             for s in self.world.snapshots.iter().filter(|s| s.branch_id == b.id) {
                 freed += self.size(&s.db_name);
@@ -647,12 +781,21 @@ impl<'a> Planner<'a> {
             self.push_delete_branch(&mut plan, b);
         }
         for s in &self.world.snapshots {
-            if !self.live(&s.db_name) && !plan.steps.iter().any(|st| matches!(st, Step::ForgetSnapshot { db_name } if *db_name == s.db_name)) {
-                plan.push(Step::ForgetSnapshot { db_name: s.db_name.clone() });
+            if !self.live(&s.db_name)
+                && !plan.steps.iter().any(
+                    |st| matches!(st, Step::ForgetSnapshot { db_name } if *db_name == s.db_name),
+                )
+            {
+                plan.push(Step::ForgetSnapshot {
+                    db_name: s.db_name.clone(),
+                });
             }
         }
         if freed > 0 {
-            plan.notes.push(format!("frees about {}", crate::engine::postgres::format_bytes(freed)));
+            plan.notes.push(format!(
+                "frees about {}",
+                crate::engine::postgres::format_bytes(freed)
+            ));
         }
         Ok(plan)
     }
@@ -661,12 +804,19 @@ impl<'a> Planner<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::config::{ComposeConfig, DatabaseConfig, GitConfig, MigrationsConfig, RoutingConfig};
+    use crate::config::{
+        ComposeConfig, DatabaseConfig, GitConfig, MigrationsConfig, RoutingConfig,
+    };
     use crate::git::testutil::*;
 
     fn cfg() -> Config {
         Config {
-            database: DatabaseConfig { engine: "postgres".into(), service: "db".into(), user: "postgres".into(), psql: None },
+            database: DatabaseConfig {
+                engine: "postgres".into(),
+                service: "db".into(),
+                user: "postgres".into(),
+                psql: None,
+            },
             routing: RoutingConfig {
                 mode: "env".into(),
                 file: ".env".into(),
@@ -680,7 +830,9 @@ mod tests {
                 seed: Some("./seed".into()),
             },
             compose: ComposeConfig::default(),
-            git: GitConfig { main_branch: Some("main".into()) },
+            git: GitConfig {
+                main_branch: Some("main".into()),
+            },
         }
     }
 
@@ -706,7 +858,16 @@ mod tests {
     fn world(branches: Vec<DbBranch>, active: &str) -> World {
         let server_dbs = branches
             .iter()
-            .map(|b| (b.db_name.clone(), DbInfo { name: b.db_name.clone(), size_bytes: 1000, allow_connections: true }))
+            .map(|b| {
+                (
+                    b.db_name.clone(),
+                    DbInfo {
+                        name: b.db_name.clone(),
+                        size_bytes: 1000,
+                        allow_connections: true,
+                    },
+                )
+            })
             .collect();
         World {
             project: Project {
@@ -768,13 +929,26 @@ mod tests {
         let w = world(
             vec![
                 branch(1, "a", "a_db", &["001.sql", "002.sql"], 1),
-                branch(2, "b", "b_db", &["001.sql", "002.sql", "003.sql", "004.sql", "005.sql", "006.sql"], 2),
+                branch(
+                    2,
+                    "b",
+                    "b_db",
+                    &[
+                        "001.sql", "002.sql", "003.sql", "004.sql", "005.sql", "006.sql",
+                    ],
+                    2,
+                ),
             ],
             "b_db",
         );
         let c = cfg();
         let plan = Planner::new(&c, &repo, &w).switch("a").unwrap();
-        assert_eq!(kinds(&plan), ["env", "start", "touch"], "{}", plan.render(true));
+        assert_eq!(
+            kinds(&plan),
+            ["env", "start", "touch"],
+            "{}",
+            plan.render(true)
+        );
         assert!(plan.warnings.is_empty(), "{:?}", plan.warnings);
     }
 
@@ -791,7 +965,17 @@ mod tests {
         let plan = Planner::new(&c, &repo, &w).switch("feature/auth").unwrap();
         assert_eq!(
             kinds(&plan),
-            ["stop", "terminate", "clone", "register", "env", "start", "migrate", "record", "touch"],
+            [
+                "stop",
+                "terminate",
+                "clone",
+                "register",
+                "env",
+                "start",
+                "migrate",
+                "record",
+                "touch"
+            ],
             "{}",
             plan.render(true)
         );
@@ -815,7 +999,10 @@ mod tests {
         commit_file(&repo, "migrations/004.sql", "4");
         git(&repo, &["checkout", "-q", "-b", "feature/c"]);
 
-        let w = world(vec![branch(1, "main", "app_dev", &["001.sql"], 1)], "app_dev");
+        let w = world(
+            vec![branch(1, "main", "app_dev", &["001.sql"], 1)],
+            "app_dev",
+        );
         let c = cfg();
         let plan = Planner::new(&c, &repo, &w).switch("feature/c").unwrap();
         assert!(
@@ -837,10 +1024,25 @@ mod tests {
         git(&repo, &["checkout", "-q", "-b", "fresh"]);
         commit_file(&repo, "migrations/001.sql", "1");
 
-        let w = world(vec![branch(1, "other", "other_db", &["009.sql"], 1)], "other_db");
+        let w = world(
+            vec![branch(1, "other", "other_db", &["009.sql"], 1)],
+            "other_db",
+        );
         let c = cfg();
         let plan = Planner::new(&c, &repo, &w).switch("fresh").unwrap();
-        assert_eq!(kinds(&plan), ["create_empty", "register", "env", "start", "migrate", "record", "seed", "touch"]);
+        assert_eq!(
+            kinds(&plan),
+            [
+                "create_empty",
+                "register",
+                "env",
+                "start",
+                "migrate",
+                "record",
+                "seed",
+                "touch"
+            ]
+        );
         assert!(!plan.warnings.is_empty());
     }
 
@@ -848,7 +1050,10 @@ mod tests {
     fn name_collision_uses_hash() {
         let (_d, repo) = repo();
         git(&repo, &["checkout", "-q", "-b", "feature-foo"]);
-        let w = world(vec![branch(1, "feature/Foo", "feature_foo_db", &[], 1)], "feature_foo_db");
+        let w = world(
+            vec![branch(1, "feature/Foo", "feature_foo_db", &[], 1)],
+            "feature_foo_db",
+        );
         let c = cfg();
         let plan = Planner::new(&c, &repo, &w).switch("feature-foo").unwrap();
         let target = plan.steps.iter().find_map(|s| match s {
@@ -877,7 +1082,19 @@ mod tests {
         let w = world(vec![branch(1, "dev", "dev_db", &[], 1), feature], "main_db");
         let c = cfg();
         let plan = Planner::new(&c, &repo, &w).reset(&ResetTo::Latest).unwrap();
-        assert_eq!(kinds(&plan), ["stop", "clone", "terminate", "drop", "rename", "record", "start", "touch"]);
+        assert_eq!(
+            kinds(&plan),
+            [
+                "stop",
+                "clone",
+                "terminate",
+                "drop",
+                "rename",
+                "record",
+                "start",
+                "touch"
+            ]
+        );
         assert!(plan.has_destructive());
     }
 
@@ -885,7 +1102,10 @@ mod tests {
     fn delete_refuses_active_and_gc_finds_gone_branches() {
         let (_d, repo) = repo();
         let w = world(
-            vec![branch(1, "main", "main_db", &[], 1), branch(2, "deleted/branch", "deleted_branch_db", &[], 2)],
+            vec![
+                branch(1, "main", "main_db", &[], 1),
+                branch(2, "deleted/branch", "deleted_branch_db", &[], 2),
+            ],
             "main_db",
         );
         let c = cfg();
@@ -893,7 +1113,9 @@ mod tests {
         assert!(p.delete("main").is_err());
         let gc = p.gc().unwrap();
         assert_eq!(kinds(&gc), ["drop", "forget"]);
-        assert!(gc.steps.contains(&Step::DropDatabase { name: "deleted_branch_db".into() }));
+        assert!(gc.steps.contains(&Step::DropDatabase {
+            name: "deleted_branch_db".into()
+        }));
     }
 
     #[test]
@@ -910,16 +1132,35 @@ mod tests {
         fresh.base_commit = repo.resolve("fresh").unwrap();
         let mut done = branch(3, "done", "done_db", &[], 3);
         done.base_commit = done_start;
-        let w = world(vec![branch(1, "main", "main_db", &[], 1), fresh, done], "main_db");
+        let w = world(
+            vec![branch(1, "main", "main_db", &[], 1), fresh, done],
+            "main_db",
+        );
         let c = cfg();
         let gc = Planner::new(&c, &repo, &w).gc().unwrap();
-        assert_eq!(gc.steps, [Step::DropDatabase { name: "done_db".into() }, Step::ForgetBranch { db_name: "done_db".into() }]);
+        assert_eq!(
+            gc.steps,
+            [
+                Step::DropDatabase {
+                    name: "done_db".into()
+                },
+                Step::ForgetBranch {
+                    db_name: "done_db".into()
+                }
+            ]
+        );
     }
 
     #[test]
     fn reconcile_reports_missing_databases() {
         let (_d, repo) = repo();
-        let mut w = world(vec![branch(1, "main", "main_db", &[], 1), branch(2, "x", "x_db", &[], 2)], "main_db");
+        let mut w = world(
+            vec![
+                branch(1, "main", "main_db", &[], 1),
+                branch(2, "x", "x_db", &[], 2),
+            ],
+            "main_db",
+        );
         w.server_dbs.remove("x_db");
         let c = cfg();
         let warnings = Planner::new(&c, &repo, &w).reconcile();

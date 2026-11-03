@@ -45,19 +45,49 @@ pub struct Plan {
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum Step {
     /// Stop app services so nothing is connected while a database is copied.
-    StopServices { services: Vec<String> },
-    TerminateConnections { db: String, sessions: Vec<String> },
-    CloneDatabase { source: String, target: String, size_bytes: u64 },
-    CreateEmptyDatabase { name: String },
+    StopServices {
+        services: Vec<String>,
+    },
+    TerminateConnections {
+        db: String,
+        sessions: Vec<String>,
+    },
+    CloneDatabase {
+        source: String,
+        target: String,
+        size_bytes: u64,
+    },
+    CreateEmptyDatabase {
+        name: String,
+    },
     /// Disallow connections, so a snapshot can't drift.
-    FreezeDatabase { name: String },
-    DropDatabase { name: String },
-    RenameDatabase { from: String, to: String },
-    RewriteEnv { file: String, variable: String, from_db: String, to_db: String },
+    FreezeDatabase {
+        name: String,
+    },
+    DropDatabase {
+        name: String,
+    },
+    RenameDatabase {
+        from: String,
+        to: String,
+    },
+    RewriteEnv {
+        file: String,
+        variable: String,
+        from_db: String,
+        to_db: String,
+    },
     /// Recreate services so they pick up the env file.
-    StartServices { services: Vec<String> },
-    RunMigrations { command: String, pending: Vec<String> },
-    RunSeed { command: String },
+    StartServices {
+        services: Vec<String>,
+    },
+    RunMigrations {
+        command: String,
+        pending: Vec<String>,
+    },
+    RunSeed {
+        command: String,
+    },
 
     // Registry bookkeeping. Shown in JSON, hidden from the short text output.
     RegisterBranch {
@@ -67,8 +97,13 @@ pub enum Step {
         base_commit: Option<String>,
         migration_files: FileSet,
     },
-    RecordMigrations { db_name: String, migration_files: FileSet },
-    TouchBranch { db_name: String },
+    RecordMigrations {
+        db_name: String,
+        migration_files: FileSet,
+    },
+    TouchBranch {
+        db_name: String,
+    },
     RegisterSnapshot {
         branch_db: String,
         db_name: String,
@@ -78,8 +113,12 @@ pub enum Step {
         migration_files: FileSet,
         size_bytes: u64,
     },
-    ForgetBranch { db_name: String },
-    ForgetSnapshot { db_name: String },
+    ForgetBranch {
+        db_name: String,
+    },
+    ForgetSnapshot {
+        db_name: String,
+    },
 }
 
 impl Step {
@@ -110,30 +149,52 @@ impl Step {
                 if sessions.len() == 1 { "" } else { "s" },
                 summarize_sessions(sessions)
             ),
-            Step::CloneDatabase { source, target, size_bytes } => {
-                format!("Create {target} as a copy of {source}  (+{})", format_bytes(*size_bytes))
+            Step::CloneDatabase {
+                source,
+                target,
+                size_bytes,
+            } => {
+                format!(
+                    "Create {target} as a copy of {source}  (+{})",
+                    format_bytes(*size_bytes)
+                )
             }
             Step::CreateEmptyDatabase { name } => format!("Create empty database {name}"),
             Step::FreezeDatabase { name } => format!("Freeze {name} (no connections allowed)"),
             Step::DropDatabase { name } => format!("DROP database {name}"),
             Step::RenameDatabase { from, to } => format!("Rename {from} → {to}"),
-            Step::RewriteEnv { file, variable, from_db, to_db } => {
+            Step::RewriteEnv {
+                file,
+                variable,
+                from_db,
+                to_db,
+            } => {
                 format!("Point {variable} in {file} at {to_db} (was {from_db})")
             }
             Step::StartServices { services } => format!("Recreate {}", services.join(", ")),
             Step::RunMigrations { command, pending } => {
                 let n = pending.len();
-                let mut s = format!("Run {n} migration{}: `{command}`", if n == 1 { "" } else { "s" });
+                let mut s = format!(
+                    "Run {n} migration{}: `{command}`",
+                    if n == 1 { "" } else { "s" }
+                );
                 for p in pending {
                     s.push_str(&format!("\n       · {}", short_file(p)));
                 }
                 s
             }
             Step::RunSeed { command } => format!("Seed: `{command}`"),
-            Step::RegisterBranch { git_branch, db_name, .. } => {
+            Step::RegisterBranch {
+                git_branch,
+                db_name,
+                ..
+            } => {
                 format!("Link git branch {git_branch} → {db_name}")
             }
-            Step::RecordMigrations { db_name, migration_files } => {
+            Step::RecordMigrations {
+                db_name,
+                migration_files,
+            } => {
                 format!("Record {} migrations for {db_name}", migration_files.len())
             }
             Step::TouchBranch { db_name } => format!("Mark {db_name} as used"),
@@ -148,7 +209,10 @@ fn summarize_sessions(sessions: &[String]) -> String {
     let mut uniq: Vec<&String> = sessions.iter().collect();
     uniq.sort();
     uniq.dedup();
-    uniq.into_iter().map(String::as_str).collect::<Vec<_>>().join(", ")
+    uniq.into_iter()
+        .map(String::as_str)
+        .collect::<Vec<_>>()
+        .join(", ")
 }
 
 fn short_file(path: &str) -> &str {
@@ -157,7 +221,13 @@ fn short_file(path: &str) -> &str {
 
 impl Plan {
     pub fn new(kind: PlanKind, summary: impl Into<String>) -> Self {
-        Self { kind, summary: summary.into(), steps: vec![], warnings: vec![], notes: vec![] }
+        Self {
+            kind,
+            summary: summary.into(),
+            steps: vec![],
+            warnings: vec![],
+            notes: vec![],
+        }
     }
 
     pub fn push(&mut self, step: Step) {
@@ -192,7 +262,11 @@ impl Plan {
         for n in &self.notes {
             out.push_str(&format!("  · {n}\n"));
         }
-        let shown: Vec<&Step> = self.steps.iter().filter(|s| verbose || !s.is_bookkeeping()).collect();
+        let shown: Vec<&Step> = self
+            .steps
+            .iter()
+            .filter(|s| verbose || !s.is_bookkeeping())
+            .collect();
         if shown.is_empty() {
             if self.notes.is_empty() {
                 out.push_str("  Nothing to do.\n");
@@ -214,15 +288,27 @@ mod tests {
     #[test]
     fn render_hides_bookkeeping() {
         let mut p = Plan::new(PlanKind::Switch, "Switch DB to feature_auth_db");
-        p.push(Step::CloneDatabase { source: "dev_db".into(), target: "feature_auth_db".into(), size_bytes: 2 << 30 });
-        p.push(Step::TouchBranch { db_name: "feature_auth_db".into() });
+        p.push(Step::CloneDatabase {
+            source: "dev_db".into(),
+            target: "feature_auth_db".into(),
+            size_bytes: 2 << 30,
+        });
+        p.push(Step::TouchBranch {
+            db_name: "feature_auth_db".into(),
+        });
         p.push(Step::RunMigrations {
             command: "make migrate".into(),
             pending: vec!["alembic/versions/3f9a_users.py".into()],
         });
         let text = p.render(false);
-        assert!(text.contains("1. Create feature_auth_db as a copy of dev_db  (+2.0 GB)"), "{text}");
-        assert!(text.contains("2. Run 1 migration: `make migrate`\n       · 3f9a_users.py"), "{text}");
+        assert!(
+            text.contains("1. Create feature_auth_db as a copy of dev_db  (+2.0 GB)"),
+            "{text}"
+        );
+        assert!(
+            text.contains("2. Run 1 migration: `make migrate`\n       · 3f9a_users.py"),
+            "{text}"
+        );
         assert!(!text.contains("Mark"));
         assert!(p.render(true).contains("Mark feature_auth_db as used"));
         assert!(!p.is_noop());
@@ -231,8 +317,13 @@ mod tests {
 
     #[test]
     fn json_shape_is_tagged() {
-        let s = Step::DropDatabase { name: "x_db".into() };
-        assert_eq!(serde_json::to_string(&s).unwrap(), r#"{"type":"drop_database","name":"x_db"}"#);
+        let s = Step::DropDatabase {
+            name: "x_db".into(),
+        };
+        assert_eq!(
+            serde_json::to_string(&s).unwrap(),
+            r#"{"type":"drop_database","name":"x_db"}"#
+        );
         assert!(s.is_destructive());
     }
 }

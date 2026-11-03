@@ -20,14 +20,22 @@ pub fn parse(content: &str) -> Vec<EnvEntry> {
         .enumerate()
         .filter_map(|(i, line)| {
             let p = parse_line(line)?;
-            Some(EnvEntry { line: i, key: p.key.to_string(), value: p.unquoted() })
+            Some(EnvEntry {
+                line: i,
+                key: p.key.to_string(),
+                value: p.unquoted(),
+            })
         })
         .collect()
 }
 
 /// The effective (last) value of `key`.
 pub fn get(content: &str, key: &str) -> Option<String> {
-    parse(content).into_iter().rev().find(|e| e.key == key).map(|e| e.value)
+    parse(content)
+        .into_iter()
+        .rev()
+        .find(|e| e.key == key)
+        .map(|e| e.value)
 }
 
 /// Database name inside a value: the path of a URL, or the whole value.
@@ -58,7 +66,9 @@ pub fn replace_db_name(value: &str, new_db: &str) -> Result<String> {
 /// Returns the new file content and the database name it pointed at before.
 pub fn set_db_name(content: &str, key: &str, new_db: &str) -> Result<(String, String)> {
     let mut lines: Vec<String> = content.split('\n').map(str::to_string).collect();
-    let Some(idx) = lines.iter().rposition(|l| parse_line(l).is_some_and(|p| p.key == key))
+    let Some(idx) = lines
+        .iter()
+        .rposition(|l| parse_line(l).is_some_and(|p| p.key == key))
     else {
         bail!("variable {key} is not defined");
     };
@@ -76,7 +86,12 @@ pub fn set_db_name(content: &str, key: &str, new_db: &str) -> Result<(String, St
         Some(q) => format!("{q}{new_value}{q}"),
         None => new_value,
     };
-    lines[idx] = format!("{}{}{}", &line[..p.value_start], new_raw, &line[p.value_end..]);
+    lines[idx] = format!(
+        "{}{}{}",
+        &line[..p.value_start],
+        new_raw,
+        &line[p.value_end..]
+    );
     Ok((lines.join("\n"), old_db))
 }
 
@@ -159,7 +174,10 @@ mod tests {
     fn db_name_from_urls_and_bare_values() {
         let cases = [
             ("postgresql://u:p@db:5432/app_dev", Some("app_dev")),
-            ("postgresql+psycopg2://u:p@db/app?sslmode=disable", Some("app")),
+            (
+                "postgresql+psycopg2://u:p@db/app?sslmode=disable",
+                Some("app"),
+            ),
             ("postgres://u:p%2Fx@db:5432/app#frag", Some("app")),
             ("postgres://db:5432/", None),
             ("postgres://db:5432", None),

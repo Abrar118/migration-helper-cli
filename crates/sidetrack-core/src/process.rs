@@ -15,7 +15,11 @@ pub fn capture(cmd: &mut Command) -> Result<String> {
     if !out.status.success() {
         let stderr = String::from_utf8_lossy(&out.stderr);
         let stdout = String::from_utf8_lossy(&out.stdout);
-        let detail = if stderr.trim().is_empty() { stdout.trim() } else { stderr.trim() };
+        let detail = if stderr.trim().is_empty() {
+            stdout.trim()
+        } else {
+            stderr.trim()
+        };
         bail!("`{shown}` failed ({}): {detail}", out.status);
     }
     Ok(String::from_utf8_lossy(&out.stdout).into_owned())
@@ -29,7 +33,10 @@ pub fn capture_opt(cmd: &mut Command) -> Result<Option<String>> {
         .stderr(Stdio::null())
         .output()
         .with_context(|| format!("could not start `{shown}`"))?;
-    Ok(out.status.success().then(|| String::from_utf8_lossy(&out.stdout).into_owned()))
+    Ok(out
+        .status
+        .success()
+        .then(|| String::from_utf8_lossy(&out.stdout).into_owned()))
 }
 
 /// Run a user-supplied shell command (e.g. the migration command). Its output goes
@@ -58,7 +65,11 @@ pub fn display(cmd: &Command) -> String {
     let mut parts = vec![cmd.get_program().to_string_lossy().into_owned()];
     parts.extend(cmd.get_args().map(|a| {
         let a = a.to_string_lossy();
-        if a.contains(' ') { format!("'{a}'") } else { a.into_owned() }
+        if a.contains(' ') {
+            format!("'{a}'")
+        } else {
+            a.into_owned()
+        }
     }));
     parts.join(" ")
 }

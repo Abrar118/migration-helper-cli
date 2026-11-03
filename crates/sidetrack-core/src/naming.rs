@@ -55,14 +55,22 @@ fn suffixed(db: &str, suffix: &str) -> String {
 pub fn sanitize(branch: &str) -> String {
     let mut out = String::with_capacity(branch.len());
     for ch in branch.chars().flat_map(char::to_lowercase) {
-        let c = if ch.is_ascii_lowercase() || ch.is_ascii_digit() { ch } else { '_' };
+        let c = if ch.is_ascii_lowercase() || ch.is_ascii_digit() {
+            ch
+        } else {
+            '_'
+        };
         if c == '_' && out.ends_with('_') {
             continue;
         }
         out.push(c);
     }
     let trimmed = out.trim_matches('_');
-    let mut s = if trimmed.is_empty() { "branch".to_string() } else { trimmed.to_string() };
+    let mut s = if trimmed.is_empty() {
+        "branch".to_string()
+    } else {
+        trimmed.to_string()
+    };
     if s.starts_with(|c: char| c.is_ascii_digit()) {
         s.insert_str(0, "b_");
     }
@@ -103,7 +111,10 @@ mod tests {
 
     #[test]
     fn collapses_and_trims() {
-        assert_eq!(db_name_for_branch("--Feature//Foo..Bar--"), "feature_foo_bar_db");
+        assert_eq!(
+            db_name_for_branch("--Feature//Foo..Bar--"),
+            "feature_foo_bar_db"
+        );
         assert_eq!(db_name_for_branch("///"), "branch_db");
     }
 
@@ -118,7 +129,10 @@ mod tests {
 
     #[test]
     fn hashed_names_differ_for_colliding_branches() {
-        assert_eq!(db_name_for_branch("feature/Foo"), db_name_for_branch("feature-foo"));
+        assert_eq!(
+            db_name_for_branch("feature/Foo"),
+            db_name_for_branch("feature-foo")
+        );
         assert_ne!(hashed_db_name("feature/Foo"), hashed_db_name("feature-foo"));
     }
 

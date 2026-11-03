@@ -17,9 +17,16 @@ pub struct Git {
 impl Git {
     /// Find the repository containing `dir`.
     pub fn discover(dir: &Path) -> Result<Self> {
-        let out = capture(Command::new("git").arg("-C").arg(dir).args(["rev-parse", "--show-toplevel"]))
-            .context("not inside a git repository")?;
-        Ok(Self { root: PathBuf::from(out.trim()) })
+        let out = capture(
+            Command::new("git")
+                .arg("-C")
+                .arg(dir)
+                .args(["rev-parse", "--show-toplevel"]),
+        )
+        .context("not inside a git repository")?;
+        Ok(Self {
+            root: PathBuf::from(out.trim()),
+        })
     }
 
     pub fn root(&self) -> &Path {
@@ -59,18 +66,28 @@ impl Git {
     }
 
     pub fn branch_exists(&self, name: &str) -> Result<bool> {
-        Ok(self.run_opt(&["show-ref", "--verify", "-q", &format!("refs/heads/{name}")])?.is_some())
+        Ok(self
+            .run_opt(&["show-ref", "--verify", "-q", &format!("refs/heads/{name}")])?
+            .is_some())
     }
 
     pub fn local_branches(&self) -> Result<Vec<String>> {
         let out = self.run(&["for-each-ref", "--format=%(refname:short)", "refs/heads/"])?;
-        Ok(out.lines().map(str::to_string).filter(|l| !l.is_empty()).collect())
+        Ok(out
+            .lines()
+            .map(str::to_string)
+            .filter(|l| !l.is_empty())
+            .collect())
     }
 
     /// Local branches fully merged into `target`.
     pub fn merged_into(&self, target: &str) -> Result<Vec<String>> {
         let out = self.run(&["branch", "--format=%(refname:short)", "--merged", target])?;
-        Ok(out.lines().map(str::to_string).filter(|l| !l.is_empty() && l != target).collect())
+        Ok(out
+            .lines()
+            .map(str::to_string)
+            .filter(|l| !l.is_empty() && l != target)
+            .collect())
     }
 
     /// Names of the entries directly inside `dir` at `rev` (relative to `dir`).
@@ -79,19 +96,28 @@ impl Git {
         let out = self.run(&["ls-tree", "--name-only", rev, "--", &format!("{dir}/")])?;
         Ok(out
             .lines()
-            .filter_map(|l| l.strip_prefix(dir).map(|r| r.trim_start_matches('/').to_string()))
+            .filter_map(|l| {
+                l.strip_prefix(dir)
+                    .map(|r| r.trim_start_matches('/').to_string())
+            })
             .filter(|n| !n.is_empty())
             .collect())
     }
 
     pub fn is_tracked(&self, path: &str) -> Result<bool> {
-        Ok(self.run_opt(&["ls-files", "--error-unmatch", "--", path])?.is_some())
+        Ok(self
+            .run_opt(&["ls-files", "--error-unmatch", "--", path])?
+            .is_some())
     }
 
     /// Absolute path of a file inside the git dir (`rev-parse --git-path`).
     pub fn git_path(&self, name: &str) -> Result<PathBuf> {
         let p = PathBuf::from(self.run(&["rev-parse", "--git-path", name])?);
-        Ok(if p.is_absolute() { p } else { self.root.join(p) })
+        Ok(if p.is_absolute() {
+            p
+        } else {
+            self.root.join(p)
+        })
     }
 
     pub fn hooks_dir(&self) -> Result<PathBuf> {
@@ -125,8 +151,16 @@ pub(crate) mod testutil {
     pub fn repo() -> (tempfile::TempDir, Git) {
         let dir = tempfile::tempdir().unwrap();
         let g = |args: &[&str]| {
-            let ok = Command::new("git").current_dir(dir.path()).args(args).output().unwrap();
-            assert!(ok.status.success(), "git {args:?}: {}", String::from_utf8_lossy(&ok.stderr));
+            let ok = Command::new("git")
+                .current_dir(dir.path())
+                .args(args)
+                .output()
+                .unwrap();
+            assert!(
+                ok.status.success(),
+                "git {args:?}: {}",
+                String::from_utf8_lossy(&ok.stderr)
+            );
         };
         g(&["init", "-q", "-b", "main"]);
         g(&["config", "user.email", "t@example.com"]);
@@ -138,7 +172,10 @@ pub(crate) mod testutil {
     }
 
     pub fn git(repo: &Git, args: &[&str]) -> String {
-        capture(Command::new("git").current_dir(repo.root()).args(args)).unwrap().trim().to_string()
+        capture(Command::new("git").current_dir(repo.root()).args(args))
+            .unwrap()
+            .trim()
+            .to_string()
     }
 
     /// Write a file and commit it.
@@ -163,7 +200,11 @@ mod tests {
         git(&repo, &["checkout", "-q", "-b", "feature/x"]);
         commit_file(&repo, "migrations/002_b.sql", "b");
 
-        let names: Vec<_> = repo.tree_entries("HEAD", "migrations").unwrap().into_iter().collect();
+        let names: Vec<_> = repo
+            .tree_entries("HEAD", "migrations")
+            .unwrap()
+            .into_iter()
+            .collect();
         assert_eq!(names, ["001_a.sql", "002_b.sql"]);
         assert_eq!(repo.tree_entries("main", "migrations/").unwrap().len(), 1);
         assert!(repo.tree_entries("main", "nope").unwrap().is_empty());
@@ -172,7 +213,10 @@ mod tests {
         assert!(!repo.branch_exists("feature/y").unwrap());
         let main = repo.resolve("main").unwrap().unwrap();
         assert_eq!(repo.merge_base("main", "feature/x").unwrap().unwrap(), main);
-        assert!(repo.merged_into("feature/x").unwrap().contains(&"main".to_string()));
+        assert!(repo
+            .merged_into("feature/x")
+            .unwrap()
+            .contains(&"main".to_string()));
         assert!(repo.operation_in_progress().unwrap().is_none());
 
         git(&repo, &["checkout", "-q", "--detach"]);

@@ -66,7 +66,16 @@ impl Postgres {
         if let Some(d) = &self.dir {
             cmd.current_dir(d);
         }
-        cmd.args(["-X", "-q", "-A", "-t", "-v", "ON_ERROR_STOP=1", "-d", MAINTENANCE_DB]);
+        cmd.args([
+            "-X",
+            "-q",
+            "-A",
+            "-t",
+            "-v",
+            "ON_ERROR_STOP=1",
+            "-d",
+            MAINTENANCE_DB,
+        ]);
         cmd.arg("-F").arg(SEP.to_string());
         for s in statements {
             cmd.arg("-c").arg(s);
@@ -93,7 +102,10 @@ impl Postgres {
 
     /// e.g. 160004 for 16.4.
     pub fn server_version_num(&self) -> Result<u32> {
-        self.scalar("SHOW server_version_num")?.trim().parse().context("parsing server_version_num")
+        self.scalar("SHOW server_version_num")?
+            .trim()
+            .parse()
+            .context("parsing server_version_num")
     }
 
     /// All user databases (not template0/template1).
@@ -129,7 +141,10 @@ impl Postgres {
              WHERE datname = {} AND pid <> pg_backend_pid()",
             quote_literal(db)
         ))?;
-        Ok(rows.into_iter().filter_map(|r| r.into_iter().next()).collect())
+        Ok(rows
+            .into_iter()
+            .filter_map(|r| r.into_iter().next())
+            .collect())
     }
 
     /// Open sessions for every database, as `application_name` (or "unknown").
@@ -196,7 +211,9 @@ impl Postgres {
             }
         }
         if version >= 150000 {
-            self.psql(&[format!("CREATE DATABASE {dst} TEMPLATE {src} STRATEGY FILE_COPY")])?;
+            self.psql(&[format!(
+                "CREATE DATABASE {dst} TEMPLATE {src} STRATEGY FILE_COPY"
+            )])?;
             Ok(CloneMethod::FileCopy)
         } else {
             self.psql(&[format!("CREATE DATABASE {dst} TEMPLATE {src}")])?;
@@ -205,7 +222,8 @@ impl Postgres {
     }
 
     pub fn create_empty(&self, name: &str) -> Result<()> {
-        self.psql(&[format!("CREATE DATABASE {}", quote_ident(name))]).map(|_| ())
+        self.psql(&[format!("CREATE DATABASE {}", quote_ident(name))])
+            .map(|_| ())
     }
 
     pub fn drop_database(&self, name: &str) -> Result<()> {
@@ -221,14 +239,21 @@ impl Postgres {
 
     pub fn rename_database(&self, from: &str, to: &str) -> Result<()> {
         self.terminate_connections(from)?;
-        self.psql(&[format!("ALTER DATABASE {} RENAME TO {}", quote_ident(from), quote_ident(to))])
-            .map(|_| ())
+        self.psql(&[format!(
+            "ALTER DATABASE {} RENAME TO {}",
+            quote_ident(from),
+            quote_ident(to)
+        )])
+        .map(|_| ())
     }
 
     /// Freeze (false) or unfreeze (true) a database. Frozen snapshots can still be copied.
     pub fn set_allow_connections(&self, name: &str, allow: bool) -> Result<()> {
-        self.psql(&[format!("ALTER DATABASE {} ALLOW_CONNECTIONS {allow}", quote_ident(name))])
-            .map(|_| ())
+        self.psql(&[format!(
+            "ALTER DATABASE {} ALLOW_CONNECTIONS {allow}",
+            quote_ident(name)
+        )])
+        .map(|_| ())
     }
 
     /// Run SQL inside a specific database (used by tests and seeding helpers).
@@ -239,7 +264,18 @@ impl Postgres {
         if let Some(d) = &self.dir {
             cmd.current_dir(d);
         }
-        cmd.args(["-X", "-q", "-A", "-t", "-v", "ON_ERROR_STOP=1", "-d", db, "-c", sql]);
+        cmd.args([
+            "-X",
+            "-q",
+            "-A",
+            "-t",
+            "-v",
+            "ON_ERROR_STOP=1",
+            "-d",
+            db,
+            "-c",
+            sql,
+        ]);
         capture(&mut cmd)
     }
 }
@@ -253,7 +289,11 @@ pub fn format_bytes(bytes: u64) -> String {
         v /= 1024.0;
         unit += 1;
     }
-    if unit == 0 { format!("{bytes} B") } else { format!("{v:.1} {}", UNITS[unit]) }
+    if unit == 0 {
+        format!("{bytes} B")
+    } else {
+        format!("{v:.1} {}", UNITS[unit])
+    }
 }
 
 #[cfg(test)]
@@ -263,14 +303,20 @@ mod tests {
     #[test]
     fn bytes() {
         assert_eq!(format_bytes(512), "512 B");
-        assert_eq!(format_bytes(2 * 1024 * 1024 * 1024 + 100 * 1024 * 1024), "2.1 GB");
+        assert_eq!(
+            format_bytes(2 * 1024 * 1024 * 1024 + 100 * 1024 * 1024),
+            "2.1 GB"
+        );
     }
 
     /// Set SIDETRACK_TEST_PG to a psql command prefix, e.g.
     /// `docker exec -i st-pg psql -U postgres`.
     fn test_pg() -> Option<Postgres> {
         let argv = std::env::var("SIDETRACK_TEST_PG").ok()?;
-        Some(Postgres::new(argv.split_whitespace().map(String::from).collect(), None))
+        Some(Postgres::new(
+            argv.split_whitespace().map(String::from).collect(),
+            None,
+        ))
     }
 
     #[test]
@@ -284,11 +330,15 @@ mod tests {
             pg.drop_database(d).unwrap();
         }
         pg.create_empty(a).unwrap();
-        pg.execute_in(a, "CREATE TABLE t (id int); INSERT INTO t VALUES (1), (2)").unwrap();
+        pg.execute_in(a, "CREATE TABLE t (id int); INSERT INTO t VALUES (1), (2)")
+            .unwrap();
 
         let method = pg.clone_database(a, b).unwrap();
         eprintln!("clone method: {method:?}");
-        assert_eq!(pg.execute_in(b, "SELECT count(*) FROM t").unwrap().trim(), "2");
+        assert_eq!(
+            pg.execute_in(b, "SELECT count(*) FROM t").unwrap().trim(),
+            "2"
+        );
 
         pg.set_allow_connections(b, false).unwrap();
         let info = pg.list_databases().unwrap();

@@ -126,7 +126,10 @@ pub struct Registry {
 }
 
 pub fn now() -> i64 {
-    SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_secs() as i64).unwrap_or(0)
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_secs() as i64)
+        .unwrap_or(0)
 }
 
 /// `$SIDETRACK_REGISTRY`, or the platform data dir (`~/.local/share/sidetrack/registry.sqlite`).
@@ -164,7 +167,9 @@ impl Registry {
         conn.execute_batch("PRAGMA foreign_keys = ON; PRAGMA busy_timeout = 5000;")?;
         let version: i64 = conn.query_row("PRAGMA user_version", [], |r| r.get(0))?;
         if version < 1 {
-            conn.execute_batch(&format!("BEGIN; {SCHEMA_V1} PRAGMA user_version = 1; COMMIT;"))?;
+            conn.execute_batch(&format!(
+                "BEGIN; {SCHEMA_V1} PRAGMA user_version = 1; COMMIT;"
+            ))?;
         }
         Ok(Self { conn })
     }
@@ -187,7 +192,8 @@ impl Registry {
                db_service = excluded.db_service",
             params![repo_root, compose_project, engine, db_service, now()],
         )?;
-        self.project_by_root(repo_root)?.context("project vanished after insert")
+        self.project_by_root(repo_root)?
+            .context("project vanished after insert")
     }
 
     pub fn project_by_root(&self, repo_root: &str) -> Result<Option<Project>> {
@@ -229,13 +235,17 @@ impl Registry {
     }
 
     pub fn set_auto_approve(&self, project_id: i64, on: bool) -> Result<()> {
-        self.conn.execute("UPDATE projects SET auto_approve = ?2 WHERE id = ?1", params![project_id, on])?;
+        self.conn.execute(
+            "UPDATE projects SET auto_approve = ?2 WHERE id = ?1",
+            params![project_id, on],
+        )?;
         Ok(())
     }
 
     // ---- branches ----
 
-    const BRANCH_COLS: &'static str = "id, project_id, git_branch, db_name, parent_id, base_commit, \
+    const BRANCH_COLS: &'static str =
+        "id, project_id, git_branch, db_name, parent_id, base_commit, \
         migration_files, adopted, created_at, last_used_at";
 
     fn branch_row(r: &Row) -> rusqlite::Result<DbBranch> {
@@ -264,18 +274,36 @@ impl Registry {
     }
 
     pub fn branch_by_git(&self, project_id: i64, git_branch: &str) -> Result<Option<DbBranch>> {
-        let sql = format!("SELECT {} FROM db_branches WHERE project_id = ?1 AND git_branch = ?2", Self::BRANCH_COLS);
-        Ok(self.conn.query_row(&sql, params![project_id, git_branch], Self::branch_row).optional()?)
+        let sql = format!(
+            "SELECT {} FROM db_branches WHERE project_id = ?1 AND git_branch = ?2",
+            Self::BRANCH_COLS
+        );
+        Ok(self
+            .conn
+            .query_row(&sql, params![project_id, git_branch], Self::branch_row)
+            .optional()?)
     }
 
     pub fn branch_by_db(&self, project_id: i64, db_name: &str) -> Result<Option<DbBranch>> {
-        let sql = format!("SELECT {} FROM db_branches WHERE project_id = ?1 AND db_name = ?2", Self::BRANCH_COLS);
-        Ok(self.conn.query_row(&sql, params![project_id, db_name], Self::branch_row).optional()?)
+        let sql = format!(
+            "SELECT {} FROM db_branches WHERE project_id = ?1 AND db_name = ?2",
+            Self::BRANCH_COLS
+        );
+        Ok(self
+            .conn
+            .query_row(&sql, params![project_id, db_name], Self::branch_row)
+            .optional()?)
     }
 
     pub fn branch(&self, id: i64) -> Result<Option<DbBranch>> {
-        let sql = format!("SELECT {} FROM db_branches WHERE id = ?1", Self::BRANCH_COLS);
-        Ok(self.conn.query_row(&sql, [id], Self::branch_row).optional()?)
+        let sql = format!(
+            "SELECT {} FROM db_branches WHERE id = ?1",
+            Self::BRANCH_COLS
+        );
+        Ok(self
+            .conn
+            .query_row(&sql, [id], Self::branch_row)
+            .optional()?)
     }
 
     pub fn insert_branch(&self, project_id: i64, b: &NewBranch) -> Result<DbBranch> {
@@ -308,12 +336,16 @@ impl Registry {
     }
 
     pub fn touch_branch(&self, id: i64) -> Result<()> {
-        self.conn.execute("UPDATE db_branches SET last_used_at = ?2 WHERE id = ?1", params![id, now()])?;
+        self.conn.execute(
+            "UPDATE db_branches SET last_used_at = ?2 WHERE id = ?1",
+            params![id, now()],
+        )?;
         Ok(())
     }
 
     pub fn delete_branch(&self, id: i64) -> Result<()> {
-        self.conn.execute("DELETE FROM db_branches WHERE id = ?1", [id])?;
+        self.conn
+            .execute("DELETE FROM db_branches WHERE id = ?1", [id])?;
         Ok(())
     }
 
@@ -379,7 +411,8 @@ impl Registry {
     }
 
     pub fn delete_snapshot(&self, id: i64) -> Result<()> {
-        self.conn.execute("DELETE FROM snapshots WHERE id = ?1", [id])?;
+        self.conn
+            .execute("DELETE FROM snapshots WHERE id = ?1", [id])?;
         Ok(())
     }
 
@@ -415,8 +448,15 @@ mod tests {
     fn crud() {
         let dir = tempfile::tempdir().unwrap();
         let reg = Registry::open(&dir.path().join("sub/registry.sqlite")).unwrap();
-        let p = reg.upsert_project("/repo", "shop", "postgres", "db").unwrap();
-        assert_eq!(reg.upsert_project("/repo", "shop2", "postgres", "db").unwrap().id, p.id);
+        let p = reg
+            .upsert_project("/repo", "shop", "postgres", "db")
+            .unwrap();
+        assert_eq!(
+            reg.upsert_project("/repo", "shop2", "postgres", "db")
+                .unwrap()
+                .id,
+            p.id
+        );
         assert!(!p.auto_approve);
         reg.set_auto_approve(p.id, true).unwrap();
         assert!(reg.project_by_root("/repo").unwrap().unwrap().auto_approve);
@@ -434,11 +474,22 @@ mod tests {
                 },
             )
             .unwrap();
-        assert_eq!(reg.branch_by_db(p.id, "app_dev").unwrap().unwrap().id, dev.id);
+        assert_eq!(
+            reg.branch_by_db(p.id, "app_dev").unwrap().unwrap().id,
+            dev.id
+        );
         assert_eq!(dev.migration_files, files(&["001.sql"]));
 
-        reg.set_branch_files(dev.id, &files(&["001.sql", "002.sql"])).unwrap();
-        assert_eq!(reg.branch_by_git(p.id, "dev").unwrap().unwrap().migration_files.len(), 2);
+        reg.set_branch_files(dev.id, &files(&["001.sql", "002.sql"]))
+            .unwrap();
+        assert_eq!(
+            reg.branch_by_git(p.id, "dev")
+                .unwrap()
+                .unwrap()
+                .migration_files
+                .len(),
+            2
+        );
 
         assert_eq!(reg.next_snapshot_seq(dev.id).unwrap(), 1);
         let s = reg
@@ -467,7 +518,10 @@ mod tests {
     fn reopening_keeps_data() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("r.sqlite");
-        Registry::open(&path).unwrap().upsert_project("/r", "x", "postgres", "db").unwrap();
+        Registry::open(&path)
+            .unwrap()
+            .upsert_project("/r", "x", "postgres", "db")
+            .unwrap();
         assert_eq!(Registry::open(&path).unwrap().projects().unwrap().len(), 1);
     }
 }

@@ -12,7 +12,6 @@ use sidetrack_core::workspace::Workspace;
 
 use crate::ui::{self, Opts};
 
-
 const BEGIN: &str = "# >>> sidetrack >>>";
 const END: &str = "# <<< sidetrack <<<";
 
@@ -37,7 +36,9 @@ pub fn install(git: &Git) -> Result<String> {
     let path = dir.join("post-checkout");
     let existing = std::fs::read_to_string(&path).ok();
     let content = match existing {
-        Some(c) if c.contains(BEGIN) => return Ok(format!("already installed in {}", path.display())),
+        Some(c) if c.contains(BEGIN) => {
+            return Ok(format!("already installed in {}", path.display()))
+        }
         Some(c) => {
             let first = c.lines().next().unwrap_or("");
             if !(first.starts_with("#!") && (first.contains("sh") || first.contains("bash"))) {
@@ -71,7 +72,9 @@ pub fn uninstall(git: &Git) -> Result<String> {
     };
     let end = end + END.len() + usize::from(content[end + END.len()..].starts_with('\n'));
     let remaining = format!("{}{}", &content[..start], &content[end..]);
-    let meaningful = remaining.lines().any(|l| !l.trim().is_empty() && !l.starts_with("#!"));
+    let meaningful = remaining
+        .lines()
+        .any(|l| !l.trim().is_empty() && !l.starts_with("#!"));
     if meaningful {
         std::fs::write(&path, remaining)?;
     } else {
@@ -100,7 +103,9 @@ fn run_inner(dir: &Path, flag: &str) -> Result<()> {
     if std::env::var("SIDETRACK_SKIP").is_ok_and(|v| !v.is_empty() && v != "0") || flag != "1" {
         return Ok(());
     }
-    let Ok(git) = Git::discover(dir) else { return Ok(()) };
+    let Ok(git) = Git::discover(dir) else {
+        return Ok(());
+    };
     if !Config::exists(git.root()) || git.operation_in_progress()?.is_some() {
         return Ok(());
     }
@@ -129,7 +134,10 @@ fn run_inner(dir: &Path, flag: &str) -> Result<()> {
     }
     let auto = project.auto_approve && !plan.has_destructive();
     if !auto && !ui::has_tty() {
-        eprintln!("sidetrack: {} — run `sidetrack switch` to apply", plan.summary);
+        eprintln!(
+            "sidetrack: {} — run `sidetrack switch` to apply",
+            plan.summary
+        );
         return Ok(());
     }
     println!();

@@ -26,7 +26,11 @@ pub enum Answer {
 
 /// Is there a terminal to ask on? Git GUIs run hooks without one.
 pub fn has_tty() -> bool {
-    OpenOptions::new().read(true).write(true).open("/dev/tty").is_ok()
+    OpenOptions::new()
+        .read(true)
+        .write(true)
+        .open("/dev/tty")
+        .is_ok()
 }
 
 /// Ask on the terminal (not stdin, which git hooks don't connect).
@@ -75,7 +79,10 @@ pub fn run_plan(ws: &Workspace, project: &Project, plan: &Plan, opts: &Opts) -> 
         // Bookkeeping only (e.g. "mark as used"): no need to ask.
         let report = ws.applier(project).apply(plan, &mut |_| {})?;
         if opts.json {
-            println!("{}", serde_json::json!({ "plan": plan, "applied": true, "report": report }));
+            println!(
+                "{}",
+                serde_json::json!({ "plan": plan, "applied": true, "report": report })
+            );
         }
         return Ok(report.ok());
     }
@@ -91,12 +98,18 @@ pub fn run_plan(ws: &Workspace, project: &Project, plan: &Plan, opts: &Opts) -> 
         bail!("no terminal to ask for approval; re-run with --yes (or --dry-run to only see the plan)");
     } else {
         let destructive = plan.has_destructive();
-        let q = if destructive { "This deletes data. Apply?" } else { "Apply?" };
+        let q = if destructive {
+            "This deletes data. Apply?"
+        } else {
+            "Apply?"
+        };
         match ask(q, !destructive, !destructive)? {
             Answer::Yes => true,
             Answer::Always => {
                 ws.reg.set_auto_approve(project.id, true)?;
-                println!("OK — future non-destructive plans in this repo will apply without asking.");
+                println!(
+                    "OK — future non-destructive plans in this repo will apply without asking."
+                );
                 true
             }
             Answer::No => false,
@@ -117,7 +130,10 @@ pub fn run_plan(ws: &Workspace, project: &Project, plan: &Plan, opts: &Opts) -> 
         }
     })?;
     if opts.json {
-        println!("{}", serde_json::json!({ "plan": plan, "applied": true, "report": report }));
+        println!(
+            "{}",
+            serde_json::json!({ "plan": plan, "applied": true, "report": report })
+        );
     } else {
         print_outcome(&report);
     }
@@ -127,7 +143,11 @@ pub fn run_plan(ws: &Workspace, project: &Project, plan: &Plan, opts: &Opts) -> 
 pub fn print_outcome(report: &Report) {
     match &report.outcome {
         Outcome::Done => println!("Done."),
-        Outcome::RolledBack { step, error, undo_errors } => {
+        Outcome::RolledBack {
+            step,
+            error,
+            undo_errors,
+        } => {
             println!("Failed at \"{step}\": {error}");
             if undo_errors.is_empty() {
                 println!("Everything before it was undone; nothing changed.");

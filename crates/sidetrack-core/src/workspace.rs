@@ -35,7 +35,14 @@ impl Workspace {
         let root = git.root().to_path_buf();
         let compose = compose_for(&cfg, &root);
         let pg = postgres_for(&cfg, &compose);
-        Self { root, git, cfg, compose, pg, reg }
+        Self {
+            root,
+            git,
+            cfg,
+            compose,
+            pg,
+            reg,
+        }
     }
 
     pub fn root_key(&self) -> String {
@@ -61,12 +68,16 @@ impl Workspace {
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
             Err(e) => return Err(e).with_context(|| format!("reading {}", path.display())),
         };
-        Ok(envfile::get(&content, &self.cfg.routing.variable).and_then(|v| envfile::db_name_in_value(&v)))
+        Ok(envfile::get(&content, &self.cfg.routing.variable)
+            .and_then(|v| envfile::db_name_in_value(&v)))
     }
 
     /// Gather everything the planner needs. Needs Docker and the DB container.
     pub fn world(&self) -> Result<World> {
-        anyhow::ensure!(docker_available(), "Docker isn't reachable; start Docker and try again");
+        anyhow::ensure!(
+            docker_available(),
+            "Docker isn't reachable; start Docker and try again"
+        );
         let project = self.project()?;
         let running_services = self.compose.running_services()?;
         anyhow::ensure!(
@@ -75,7 +86,12 @@ impl Workspace {
             self.cfg.database.service,
             self.cfg.database.service
         );
-        let server_dbs = self.pg.list_databases()?.into_iter().map(|d| (d.name.clone(), d)).collect();
+        let server_dbs = self
+            .pg
+            .list_databases()?
+            .into_iter()
+            .map(|d| (d.name.clone(), d))
+            .collect();
         Ok(World {
             branches: self.reg.branches(project.id)?,
             snapshots: self.reg.snapshots(project.id)?,

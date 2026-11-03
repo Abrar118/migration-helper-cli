@@ -9,7 +9,9 @@ use anyhow::{bail, Context, Result};
 use serde::Serialize;
 
 use crate::compose::{ComposeModel, Service};
-use crate::config::{ComposeConfig, Config, DatabaseConfig, GitConfig, MigrationsConfig, RoutingConfig};
+use crate::config::{
+    ComposeConfig, Config, DatabaseConfig, GitConfig, MigrationsConfig, RoutingConfig,
+};
 use crate::envfile;
 
 /// The three ways compose can print its config (see `compose::ConfigView`).
@@ -94,7 +96,10 @@ pub fn detect(root: &Path, compose_dir: &Path, views: &ComposeViews) -> Result<D
     let user = db.env("POSTGRES_USER").map(str::to_string);
     let user_file = db.env("POSTGRES_USER_FILE").map(str::to_string);
     let effective_user = user.clone().unwrap_or_else(|| "postgres".to_string());
-    let active_db = db.env("POSTGRES_DB").map(str::to_string).unwrap_or_else(|| effective_user.clone());
+    let active_db = db
+        .env("POSTGRES_DB")
+        .map(str::to_string)
+        .unwrap_or_else(|| effective_user.clone());
 
     // ---- app services: anything that depends on or talks to the DB service
     let app_services: Vec<String> = resolved
@@ -106,7 +111,14 @@ pub fn detect(root: &Path, compose_dir: &Path, views: &ComposeViews) -> Result<D
         .collect();
 
     // ---- routing variable
-    let (routing, routing_problem) = find_routing(root, compose_dir, views, &app_services, &active_db, &mut notes);
+    let (routing, routing_problem) = find_routing(
+        root,
+        compose_dir,
+        views,
+        &app_services,
+        &active_db,
+        &mut notes,
+    );
 
     // ---- migrations
     let migrations = detect_migrations(root, resolved, &db_service, &app_services, &mut notes)?;
@@ -128,7 +140,10 @@ pub fn detect(root: &Path, compose_dir: &Path, views: &ComposeViews) -> Result<D
 
 fn mentions_host(s: &Service, host: &str) -> bool {
     s.environment.values().flatten().any(|v| {
-        v == host || v.contains(&format!("@{host}:")) || v.contains(&format!("@{host}/")) || v.ends_with(&format!("@{host}"))
+        v == host
+            || v.contains(&format!("@{host}:"))
+            || v.contains(&format!("@{host}/"))
+            || v.ends_with(&format!("@{host}"))
     })
 }
 
@@ -138,12 +153,19 @@ fn routing_score(key: &str, value: &str, active_db: &str) -> Option<u8> {
         return None;
     }
     let k = key.to_uppercase();
-    if ["USER", "PASSWORD", "PASS", "HOST", "PORT"].iter().any(|bad| k.contains(bad)) {
+    if ["USER", "PASSWORD", "PASS", "HOST", "PORT"]
+        .iter()
+        .any(|bad| k.contains(bad))
+    {
         return None;
     }
     if value.contains("://") {
         Some(3)
-    } else if k.contains("DATABASE") || k.ends_with("_DB") || k.contains("DB_NAME") || k == "PGDATABASE" {
+    } else if k.contains("DATABASE")
+        || k.ends_with("_DB")
+        || k.contains("DB_NAME")
+        || k == "PGDATABASE"
+    {
         Some(2)
     } else {
         None
@@ -163,7 +185,9 @@ fn find_routing(
     let mut problems = vec![];
 
     for svc in app_services {
-        let Some(resolved) = views.resolved.services.get(svc) else { continue };
+        let Some(resolved) = views.resolved.services.get(svc) else {
+            continue;
+        };
         let best = resolved
             .environment
             .iter()
@@ -172,7 +196,10 @@ fn find_routing(
             .map(|(_, k)| k.clone());
         let Some(var) = best else { continue };
         match locate_variable(root, compose_dir, views, svc, &var, active_db) {
-            Ok((file, variable)) => sources.entry((file, variable)).or_default().push(svc.clone()),
+            Ok((file, variable)) => sources
+                .entry((file, variable))
+                .or_default()
+                .push(svc.clone()),
             Err(e) => problems.push(format!("{svc}: {e}")),
         }
     }
@@ -194,7 +221,14 @@ fn find_routing(
         }
     }
     notes.extend(problems);
-    (Some(Routing { file: file.clone(), variable: variable.clone(), services: services.clone() }), None)
+    (
+        Some(Routing {
+            file: file.clone(),
+            variable: variable.clone(),
+            services: services.clone(),
+        }),
+        None,
+    )
 }
 
 /// Find which env file (and variable) a service's `var` really comes from.
@@ -206,7 +240,11 @@ fn locate_variable(
     var: &str,
     active_db: &str,
 ) -> Result<(String, String)> {
-    let env_view = views.env_files.services.get(svc).context("service missing from compose config")?;
+    let env_view = views
+        .env_files
+        .services
+        .get(svc)
+        .context("service missing from compose config")?;
 
     // Defined inline in `environment:`? Then it may reference a variable from the project .env.
     if env_view.environment.contains_key(var) {
@@ -221,12 +259,18 @@ fn locate_variable(
             bail!("{var} is written directly in the compose file; move it to an untracked .env file so sidetrack can change it");
         };
         let dotenv = compose_dir.join(".env");
-        let content = std::fs::read_to_string(&dotenv)
-            .with_context(|| format!("{var} uses ${{{reference}}}, but {} can't be read", dotenv.display()))?;
+        let content = std::fs::read_to_string(&dotenv).with_context(|| {
+            format!(
+                "{var} uses ${{{reference}}}, but {} can't be read",
+                dotenv.display()
+            )
+        })?;
         let value = envfile::get(&content, &reference)
             .with_context(|| format!("{var} uses ${{{reference}}}, which isn't defined in .env"))?;
         if envfile::db_name_in_value(&value).as_deref() != Some(active_db) {
-            bail!("{var} builds the DB name from ${{{reference}}} in a way sidetrack can't rewrite");
+            bail!(
+                "{var} builds the DB name from ${{{reference}}} in a way sidetrack can't rewrite"
+            );
         }
         return Ok((relative(root, &dotenv), reference));
     }
@@ -234,12 +278,17 @@ fn locate_variable(
     // Otherwise it comes from an env_file; later files win.
     for f in env_view.env_file.iter().rev() {
         let path = PathBuf::from(&f.path);
-        let Ok(content) = std::fs::read_to_string(&path) else { continue };
+        let Ok(content) = std::fs::read_to_string(&path) else {
+            continue;
+        };
         if let Some(value) = envfile::get(&content, var) {
             if envfile::db_name_in_value(&value).as_deref() == Some(active_db) {
                 return Ok((relative(root, &path), var.to_string()));
             }
-            bail!("{var} in {} gets its DB name indirectly; point it at the DB name directly", f.path);
+            bail!(
+                "{var} in {} gets its DB name indirectly; point it at the DB name directly",
+                f.path
+            );
         }
     }
     bail!("couldn't find where {var} is defined")
@@ -251,7 +300,10 @@ fn variable_reference(raw: &str) -> Option<String> {
     let part = envfile::db_name_in_value(raw).unwrap_or_else(|| raw.to_string());
     let whole = raw.trim();
     for candidate in [whole, part.as_str()] {
-        if let Some(name) = candidate.strip_prefix("${").and_then(|r| r.strip_suffix('}')) {
+        if let Some(name) = candidate
+            .strip_prefix("${")
+            .and_then(|r| r.strip_suffix('}'))
+        {
             let name = name.split([':', '-', '?']).next().unwrap_or(name);
             return Some(name.to_string());
         }
@@ -265,27 +317,41 @@ fn variable_reference(raw: &str) -> Option<String> {
 }
 
 fn relative(root: &Path, path: &Path) -> String {
-    path.strip_prefix(root).unwrap_or(path).to_string_lossy().into_owned()
+    path.strip_prefix(root)
+        .unwrap_or(path)
+        .to_string_lossy()
+        .into_owned()
 }
 
 // ---------------------------------------------------------------- migrations
 
-const SKIP_DIRS: [&str; 10] =
-    [".git", "node_modules", "target", ".venv", "venv", "__pycache__", "dist", "build", ".tox", "vendor"];
+const SKIP_DIRS: [&str; 10] = [
+    ".git",
+    "node_modules",
+    "target",
+    ".venv",
+    "venv",
+    "__pycache__",
+    "dist",
+    "build",
+    ".tox",
+    "vendor",
+];
 
 /// Repo files up to a few levels deep, skipping dependency and build folders.
 fn walk(root: &Path, max_depth: usize) -> Vec<PathBuf> {
     let mut out = vec![];
     let mut stack = vec![(root.to_path_buf(), 0)];
     while let Some((dir, depth)) = stack.pop() {
-        let Ok(entries) = std::fs::read_dir(&dir) else { continue };
+        let Ok(entries) = std::fs::read_dir(&dir) else {
+            continue;
+        };
         for e in entries.flatten() {
             let p = e.path();
             let name = e.file_name().to_string_lossy().into_owned();
-            if p.is_dir()
-                && depth < max_depth && !SKIP_DIRS.contains(&name.as_str()) {
-                    stack.push((p.clone(), depth + 1));
-                }
+            if p.is_dir() && depth < max_depth && !SKIP_DIRS.contains(&name.as_str()) {
+                stack.push((p.clone(), depth + 1));
+            }
             out.push(p);
         }
     }
@@ -311,19 +377,29 @@ fn detect_migrations(
 ) -> Result<Migrations> {
     let files = walk(root, 4);
     let rel = |p: &Path| relative(root, p);
-    let named = |n: &'static str| files.iter().filter(move |p| p.file_name().is_some_and(|f| f == n));
+    let named = |n: &'static str| {
+        files
+            .iter()
+            .filter(move |p| p.file_name().is_some_and(|f| f == n))
+    };
 
     let found = if let Some(ini) = named("alembic.ini").next() {
         let dir = ini.parent().unwrap_or(root);
         let text = std::fs::read_to_string(ini).unwrap_or_default();
         let script = text
             .lines()
-            .find_map(|l| l.trim().strip_prefix("script_location").map(|r| r.trim_start_matches([' ', '='])))
+            .find_map(|l| {
+                l.trim()
+                    .strip_prefix("script_location")
+                    .map(|r| r.trim_start_matches([' ', '=']))
+            })
             .map(|s| s.trim().replace("%(here)s/", "").replace("%(here)s", "."))
             .unwrap_or_else(|| "alembic".into());
         Some(Found {
             tool: "alembic",
-            dirs: vec![rel(&dir.join(script.trim_start_matches("./")).join("versions"))],
+            dirs: vec![rel(&dir
+                .join(script.trim_start_matches("./"))
+                .join("versions"))],
             anchor: ini.clone(),
             command: "alembic upgrade head".into(),
         })
@@ -332,10 +408,14 @@ fn detect_migrations(
             .iter()
             .filter(|p| p.is_dir() && p.file_name().is_some_and(|n| n == "migrations"))
             .filter(|p| {
-                std::fs::read_dir(p).into_iter().flatten().flatten().any(|e| {
-                    let n = e.file_name().to_string_lossy().into_owned();
-                    n.starts_with("0001_") && n.ends_with(".py")
-                })
+                std::fs::read_dir(p)
+                    .into_iter()
+                    .flatten()
+                    .flatten()
+                    .any(|e| {
+                        let n = e.file_name().to_string_lossy().into_owned();
+                        n.starts_with("0001_") && n.ends_with(".py")
+                    })
             })
             .map(|p| rel(p))
             .collect();
@@ -364,10 +444,22 @@ fn detect_migrations(
     } else if let Some(dir) = files.iter().find(|p| {
         p.is_dir()
             && p.ends_with("db/migration")
-            && std::fs::read_dir(p).into_iter().flatten().flatten().any(|e| e.file_name().to_string_lossy().starts_with('V'))
+            && std::fs::read_dir(p)
+                .into_iter()
+                .flatten()
+                .flatten()
+                .any(|e| e.file_name().to_string_lossy().starts_with('V'))
     }) {
-        Some(Found { tool: "flyway", dirs: vec![rel(dir)], anchor: dir.clone(), command: "flyway migrate".into() })
-    } else if let Some(knex) = files.iter().find(|p| p.file_name().is_some_and(|f| f.to_string_lossy().starts_with("knexfile."))) {
+        Some(Found {
+            tool: "flyway",
+            dirs: vec![rel(dir)],
+            anchor: dir.clone(),
+            command: "flyway migrate".into(),
+        })
+    } else if let Some(knex) = files.iter().find(|p| {
+        p.file_name()
+            .is_some_and(|f| f.to_string_lossy().starts_with("knexfile."))
+    }) {
         let dir = knex.parent().unwrap_or(root);
         Some(Found {
             tool: "knex",
@@ -379,26 +471,46 @@ fn detect_migrations(
         files
             .iter()
             .find(|p| p.is_dir() && p.file_name().is_some_and(|n| n == "migrations"))
-            .map(|d| Found { tool: "generic", dirs: vec![rel(d)], anchor: d.clone(), command: String::new() })
+            .map(|d| Found {
+                tool: "generic",
+                dirs: vec![rel(d)],
+                anchor: d.clone(),
+                command: String::new(),
+            })
     };
 
     let Some(found) = found else {
-        notes.push("no migrations folder found; set migrations.dirs and migrations.command by hand".into());
-        return Ok(Migrations { tool: "generic".into(), dirs: vec![], command: None, service: None });
+        notes.push(
+            "no migrations folder found; set migrations.dirs and migrations.command by hand".into(),
+        );
+        return Ok(Migrations {
+            tool: "generic".into(),
+            dirs: vec![],
+            command: None,
+            service: None,
+        });
     };
 
     if found.command.is_empty() {
-        notes.push(format!("{} looks like a migrations folder but the tool is unknown; set migrations.command", found.dirs[0]));
-        return Ok(Migrations { tool: found.tool.into(), dirs: found.dirs, command: None, service: None });
+        notes.push(format!(
+            "{} looks like a migrations folder but the tool is unknown; set migrations.command",
+            found.dirs[0]
+        ));
+        return Ok(Migrations {
+            tool: found.tool.into(),
+            dirs: found.dirs,
+            command: None,
+            service: None,
+        });
     }
 
     // Flyway often runs as its own one-off container.
     if found.tool == "flyway" {
-        if let Some((name, _)) = resolved
-            .services
-            .iter()
-            .find(|(_, s)| s.image.as_deref().is_some_and(|i| image_name(i).contains("flyway")))
-        {
+        if let Some((name, _)) = resolved.services.iter().find(|(_, s)| {
+            s.image
+                .as_deref()
+                .is_some_and(|i| image_name(i).contains("flyway"))
+        }) {
             return Ok(Migrations {
                 tool: "flyway".into(),
                 dirs: found.dirs,
@@ -409,9 +521,18 @@ fn detect_migrations(
     }
 
     // Which service can see the migration files? Prefer app services.
-    let anchor_dir = if found.anchor.is_dir() { found.anchor.clone() } else { found.anchor.parent().unwrap_or(root).to_path_buf() };
+    let anchor_dir = if found.anchor.is_dir() {
+        found.anchor.clone()
+    } else {
+        found.anchor.parent().unwrap_or(root).to_path_buf()
+    };
     let mut order: Vec<&String> = app_services.iter().collect();
-    order.extend(resolved.services.keys().filter(|n| *n != db_service && !app_services.contains(n)));
+    order.extend(
+        resolved
+            .services
+            .keys()
+            .filter(|n| *n != db_service && !app_services.contains(n)),
+    );
     for name in order {
         let svc = &resolved.services[name];
         for (host, container) in svc.host_paths() {
@@ -421,7 +542,13 @@ fn detect_migrations(
             let inner = match container {
                 Some(target) => {
                     let sub = anchor_dir.strip_prefix(&host).unwrap_or(Path::new(""));
-                    Some(PathBuf::from(target).join(sub).to_string_lossy().trim_end_matches('/').to_string())
+                    Some(
+                        PathBuf::from(target)
+                            .join(sub)
+                            .to_string_lossy()
+                            .trim_end_matches('/')
+                            .to_string(),
+                    )
                 }
                 None => None,
             };
@@ -444,27 +571,51 @@ fn detect_migrations(
         "no compose service mounts {}; the migration command will run on your machine",
         relative(root, &anchor_dir)
     ));
-    Ok(Migrations { tool: found.tool.into(), dirs: found.dirs, command: Some(found.command), service: None })
+    Ok(Migrations {
+        tool: found.tool.into(),
+        dirs: found.dirs,
+        command: Some(found.command),
+        service: None,
+    })
 }
 
 impl Detection {
     /// Turn findings into a config. `user` must be known (resolve `user_file` first).
     pub fn to_config(&self, main_branch: Option<String>) -> Result<Config> {
         let routing = self.routing.as_ref().with_context(|| {
-            self.routing_problem.clone().unwrap_or_else(|| "no routing variable found".into())
+            self.routing_problem
+                .clone()
+                .unwrap_or_else(|| "no routing variable found".into())
         })?;
-        anyhow::ensure!(!self.migrations.dirs.is_empty(), "no migration folder found; set migrations.dirs");
-        let command = self.migrations.command.clone().context("no migration command found; set migrations.command")?;
+        anyhow::ensure!(
+            !self.migrations.dirs.is_empty(),
+            "no migration folder found; set migrations.dirs"
+        );
+        let command = self
+            .migrations
+            .command
+            .clone()
+            .context("no migration command found; set migrations.command")?;
         let user = self.user.clone().unwrap_or_else(|| "postgres".into());
         Ok(Config {
-            database: DatabaseConfig { engine: "postgres".into(), service: self.db_service.clone(), user, psql: None },
+            database: DatabaseConfig {
+                engine: "postgres".into(),
+                service: self.db_service.clone(),
+                user,
+                psql: None,
+            },
             routing: RoutingConfig {
                 mode: "env".into(),
                 file: routing.file.clone(),
                 variable: routing.variable.clone(),
                 restart: routing.services.clone(),
             },
-            migrations: MigrationsConfig { tool: self.migrations.tool.clone(), dirs: self.migrations.dirs.clone(), command, seed: None },
+            migrations: MigrationsConfig {
+                tool: self.migrations.tool.clone(),
+                dirs: self.migrations.dirs.clone(),
+                command,
+                seed: None,
+            },
             compose: ComposeConfig::default(),
             git: GitConfig { main_branch },
         })
@@ -473,13 +624,27 @@ impl Detection {
     pub fn render(&self) -> String {
         let mut s = String::new();
         s.push_str(&format!("Compose project:  {}\n", self.compose_project));
-        s.push_str(&format!("Database:         {} ({})\n", self.db_service, self.db_image));
+        s.push_str(&format!(
+            "Database:         {} ({})\n",
+            self.db_service, self.db_image
+        ));
         s.push_str(&format!(
             "  user:           {}\n",
-            self.user.as_deref().unwrap_or(if self.user_file.is_some() { "(from secret file)" } else { "postgres (default)" })
+            self.user.as_deref().unwrap_or(if self.user_file.is_some() {
+                "(from secret file)"
+            } else {
+                "postgres (default)"
+            })
         ));
         s.push_str(&format!("  current DB:     {}\n", self.active_db));
-        s.push_str(&format!("App services:     {}\n", if self.app_services.is_empty() { "none".into() } else { self.app_services.join(", ") }));
+        s.push_str(&format!(
+            "App services:     {}\n",
+            if self.app_services.is_empty() {
+                "none".into()
+            } else {
+                self.app_services.join(", ")
+            }
+        ));
         match (&self.routing, &self.routing_problem) {
             (Some(r), _) => s.push_str(&format!(
                 "DB name lives in: {} in {}  (recreate on switch: {})\n",
@@ -490,8 +655,19 @@ impl Detection {
             (None, Some(p)) => s.push_str(&format!("DB name lives in: ✗ {p}\n")),
             (None, None) => {}
         }
-        s.push_str(&format!("Migrations:       {} in {}\n", self.migrations.tool, if self.migrations.dirs.is_empty() { "?".into() } else { self.migrations.dirs.join(", ") }));
-        s.push_str(&format!("  command:        {}\n", self.migrations.command.as_deref().unwrap_or("?")));
+        s.push_str(&format!(
+            "Migrations:       {} in {}\n",
+            self.migrations.tool,
+            if self.migrations.dirs.is_empty() {
+                "?".into()
+            } else {
+                self.migrations.dirs.join(", ")
+            }
+        ));
+        s.push_str(&format!(
+            "  command:        {}\n",
+            self.migrations.command.as_deref().unwrap_or("?")
+        ));
         for n in &self.notes {
             s.push_str(&format!("  ! {n}\n"));
         }
@@ -520,26 +696,45 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let root = dir.path();
         let r = root.display();
-        write(root, "api/alembic.ini", "[alembic]\nscript_location = %(here)s/migrations\n");
+        write(
+            root,
+            "api/alembic.ini",
+            "[alembic]\nscript_location = %(here)s/migrations\n",
+        );
         write(root, "api/migrations/versions/a1_init.py", "");
-        write(root, ".env.local", "DATABASE_URL=postgresql://app:s@db:5432/app_dev\n");
+        write(
+            root,
+            ".env.local",
+            "DATABASE_URL=postgresql://app:s@db:5432/app_dev\n",
+        );
 
-        let resolved = model(&format!(r#"{{"name":"shop","services":{{
+        let resolved = model(&format!(
+            r#"{{"name":"shop","services":{{
             "db":{{"image":"postgres:16-alpine","environment":{{"POSTGRES_USER":"app","POSTGRES_DB":"app_dev"}}}},
             "api":{{"build":{{"context":"{r}/api"}},"volumes":[{{"type":"bind","source":"{r}/api","target":"/app"}}],
                    "depends_on":{{"db":{{}}}},"working_dir":"/app",
-                   "environment":{{"DATABASE_URL":"postgresql://app:s@db:5432/app_dev","POSTGRES_USER":"app"}}}}}}}}"#));
-        let env_files = model(&format!(r#"{{"name":"shop","services":{{
+                   "environment":{{"DATABASE_URL":"postgresql://app:s@db:5432/app_dev","POSTGRES_USER":"app"}}}}}}}}"#
+        ));
+        let env_files = model(&format!(
+            r#"{{"name":"shop","services":{{
             "db":{{"image":"postgres:16-alpine"}},
-            "api":{{"env_file":[{{"path":"{r}/.env.local"}}],"environment":{{"POSTGRES_USER":"app"}}}}}}}}"#));
-        let views = ComposeViews { resolved, env_files: env_files.clone(), raw: env_files };
+            "api":{{"env_file":[{{"path":"{r}/.env.local"}}],"environment":{{"POSTGRES_USER":"app"}}}}}}}}"#
+        ));
+        let views = ComposeViews {
+            resolved,
+            env_files: env_files.clone(),
+            raw: env_files,
+        };
 
         let d = detect(root, root, &views).unwrap();
         assert_eq!(d.db_service, "db");
         assert_eq!(d.active_db, "app_dev");
         assert_eq!(d.app_services, ["api"]);
         let routing = d.routing.as_ref().unwrap();
-        assert_eq!((routing.file.as_str(), routing.variable.as_str()), (".env.local", "DATABASE_URL"));
+        assert_eq!(
+            (routing.file.as_str(), routing.variable.as_str()),
+            (".env.local", "DATABASE_URL")
+        );
         assert_eq!(d.migrations.tool, "alembic");
         assert_eq!(d.migrations.dirs, ["api/migrations/versions"]);
         assert_eq!(
@@ -557,16 +752,27 @@ mod tests {
         let root = dir.path();
         write(root, ".env", "DB_NAME=shop\n");
         write(root, "migrations/001.sql", "");
-        let resolved = model(r#"{"name":"x","services":{
+        let resolved = model(
+            r#"{"name":"x","services":{
             "db":{"image":"postgis/postgis:16","environment":{"POSTGRES_DB":"shop"}},
-            "web":{"environment":{"DATABASE_URL":"postgres://u@db:5432/shop"}}}}"#);
-        let raw = model(r#"{"name":"x","services":{
+            "web":{"environment":{"DATABASE_URL":"postgres://u@db:5432/shop"}}}}"#,
+        );
+        let raw = model(
+            r#"{"name":"x","services":{
             "db":{"image":"postgis/postgis:16"},
-            "web":{"environment":{"DATABASE_URL":"postgres://u@db:5432/${DB_NAME:-shop}"}}}}"#);
-        let views = ComposeViews { resolved, env_files: raw.clone(), raw };
+            "web":{"environment":{"DATABASE_URL":"postgres://u@db:5432/${DB_NAME:-shop}"}}}}"#,
+        );
+        let views = ComposeViews {
+            resolved,
+            env_files: raw.clone(),
+            raw,
+        };
         let d = detect(root, root, &views).unwrap();
         let routing = d.routing.unwrap();
-        assert_eq!((routing.file.as_str(), routing.variable.as_str()), (".env", "DB_NAME"));
+        assert_eq!(
+            (routing.file.as_str(), routing.variable.as_str()),
+            (".env", "DB_NAME")
+        );
         assert_eq!(d.migrations.tool, "generic");
         assert!(d.migrations.command.is_none());
     }
@@ -574,13 +780,22 @@ mod tests {
     #[test]
     fn literal_in_compose_file_is_a_problem() {
         let dir = tempfile::tempdir().unwrap();
-        let resolved = model(r#"{"name":"x","services":{
+        let resolved = model(
+            r#"{"name":"x","services":{
             "db":{"image":"postgres"},
-            "web":{"depends_on":["db"],"environment":{"DATABASE_URL":"postgres://postgres@db/postgres"}}}}"#);
-        let views = ComposeViews { resolved: resolved.clone(), env_files: resolved.clone(), raw: resolved };
+            "web":{"depends_on":["db"],"environment":{"DATABASE_URL":"postgres://postgres@db/postgres"}}}}"#,
+        );
+        let views = ComposeViews {
+            resolved: resolved.clone(),
+            env_files: resolved.clone(),
+            raw: resolved,
+        };
         let d = detect(dir.path(), dir.path(), &views).unwrap();
         assert!(d.routing.is_none());
-        assert!(d.routing_problem.unwrap().contains("written directly in the compose file"));
+        assert!(d
+            .routing_problem
+            .unwrap()
+            .contains("written directly in the compose file"));
     }
 
     #[test]
@@ -606,8 +821,14 @@ mod tests {
         assert!(is_postgres_image("registry.local:5000/postgres"));
         assert!(is_postgres_image("timescale/timescaledb-ha:pg16"));
         assert!(!is_postgres_image("mysql:8"));
-        assert_eq!(variable_reference("${DB_NAME:-x}").as_deref(), Some("DB_NAME"));
-        assert_eq!(variable_reference("postgres://u@db/$DB").as_deref(), Some("DB"));
+        assert_eq!(
+            variable_reference("${DB_NAME:-x}").as_deref(),
+            Some("DB_NAME")
+        );
+        assert_eq!(
+            variable_reference("postgres://u@db/$DB").as_deref(),
+            Some("DB")
+        );
         assert_eq!(variable_reference("postgres://u@db/app"), None);
     }
 }

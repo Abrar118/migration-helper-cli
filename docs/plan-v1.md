@@ -19,10 +19,11 @@ crates/sidetrack-core/        # library: all logic, no terminal I/O
   src/plan.rs                 # Plan + Step types (serde) and rendering helpers
   src/planner.rs              # builds plans for switch/create/snapshot/reset/delete/gc
   src/apply.rs                # runs a plan, undoes completed steps on failure
-  src/project.rs              # loads config + registry + engine for one repo
+  src/workspace.rs            # loads config + registry + engine for one repo
 crates/sidetrack/             # binary `sidetrack`: clap, prompts, printing
   src/main.rs
   src/hook.rs                 # post-checkout hook install/uninstall/run (P0.10)
+  src/ui.rs                   # prompts, approval, output
 tests/e2e/                    # docker-compose fixture + script for the §1 scenario
 ```
 
@@ -51,6 +52,14 @@ These refine the spec; each is noted in code where it applies.
 6. **Migration directories are a list** (`dirs = [...]`) so Django-style projects with one `migrations/` folder per app work in v1.
 7. **SQL runs via psql with a configurable command prefix.** By default it's `docker compose exec -T <service> psql -U <user>`. Tests swap in a direct `psql` against a test container. There is no Postgres driver dependency.
 8. **"Always approve" is stored in the registry** (per project, on this machine), never in the committed `sidetrack.toml`.
+
+### Found during implementation
+
+9. **Two migration sets per candidate, not one.** "May contain" (recorded ∪ files at its branch tip) decides compatibility, where over-counting is safe. "Known applied" (recorded only) decides what to run, where under-counting is safe because the tool skips applied migrations. Using one set for both skipped needed migrations when a branch's local DB was behind its git branch (caught by the e2e test).
+10. **The hook does not skip when old HEAD == new HEAD.** The spec said to skip it, but `git checkout -b feature` keeps the same commit and still needs its own database. The hook stays quiet anyway when the plan has nothing to do.
+11. **`gc` only treats a branch as merged if it moved since its DB branch was created.** Git reports a brand-new branch with no commits as "merged", which would have dropped fresh databases.
+12. **Detection reads three compose views:** resolved (final values), `--no-env-resolution` (which `env_file` a value comes from), and `--no-interpolate` (`${VAR}` references, to find the variable in the project `.env`).
+13. **Postgres 18 "clone" isn't always copy-on-write.** `file_copy_method = clone` falls back to a normal copy on filesystems without reflinks (seen on overlayfs), so it's reported as "Clone", not as instant.
 
 ## Test strategy
 

@@ -32,9 +32,17 @@ pub struct Applier<'a> {
 pub enum Outcome {
     Done,
     /// A step failed; everything before it was undone.
-    RolledBack { step: String, error: String, undo_errors: Vec<String> },
+    RolledBack {
+        step: String,
+        error: String,
+        undo_errors: Vec<String>,
+    },
     /// A step failed and could not be (fully) undone; `note` says what state things are in.
-    Stopped { step: String, error: String, note: String },
+    Stopped {
+        step: String,
+        error: String,
+        note: String,
+    },
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -51,12 +59,21 @@ impl Report {
 
 enum Undo {
     DropDb(String),
-    RestoreEnv { path: PathBuf, content: String },
-    RenameBack { from: String, to: String },
+    RestoreEnv {
+        path: PathBuf,
+        content: String,
+    },
+    RenameBack {
+        from: String,
+        to: String,
+    },
     StartServices(Vec<String>),
     DeleteBranchRow(i64),
     DeleteSnapshotRow(i64),
-    RestoreFiles { branch_id: i64, files: FileSet },
+    RestoreFiles {
+        branch_id: i64,
+        files: FileSet,
+    },
     /// Can't be undone; undo stops here.
     Barrier(String),
     Nothing,
@@ -65,7 +82,9 @@ enum Undo {
 impl Applier<'_> {
     pub fn apply(&self, plan: &Plan, progress: &mut dyn FnMut(&str)) -> Result<Report> {
         let plan_json = serde_json::to_string(plan)?;
-        let op = self.reg.start_operation(self.project.id, plan.kind.as_str(), &plan_json)?;
+        let op = self
+            .reg
+            .start_operation(self.project.id, plan.kind.as_str(), &plan_json)?;
         let mut log = vec![];
         let mut say = |msg: String, log: &mut Vec<String>| {
             progress(&msg);
@@ -81,7 +100,10 @@ impl Applier<'_> {
             match self.run(step) {
                 Ok((u, detail)) => {
                     if let Some(d) = detail {
-                        say(format!("  {d} ({:.1}s)", started.elapsed().as_secs_f32()), &mut log);
+                        say(
+                            format!("  {d} ({:.1}s)", started.elapsed().as_secs_f32()),
+                            &mut log,
+                        );
                     }
                     undo.push(u);
                 }
@@ -89,7 +111,10 @@ impl Applier<'_> {
                     let error = format!("{e:#}");
                     let step_desc = first_line(&step.describe()).to_string();
                     say(format!("  ✗ {error}"), &mut log);
-                    let outcome = if matches!(step, Step::RunMigrations { .. } | Step::RunSeed { .. }) {
+                    let outcome = if matches!(
+                        step,
+                        Step::RunMigrations { .. } | Step::RunSeed { .. }
+                    ) {
                         Outcome::Stopped {
                             step: step_desc,
                             error,
@@ -99,23 +124,35 @@ impl Applier<'_> {
                                 .into(),
                         }
                     } else {
-                        self.roll_back(undo, step_desc, error, &mut |m| say(m.to_string(), &mut log))
+                        self.roll_back(undo, step_desc, error, &mut |m| {
+                            say(m.to_string(), &mut log)
+                        })
                     };
                     let status = match &outcome {
                         Outcome::Done => "ok",
                         Outcome::RolledBack { .. } => "rolled_back",
                         Outcome::Stopped { .. } => "stopped",
                     };
-                    self.reg.finish_operation(op, status, Some(&format!("{outcome:?}")))?;
+                    self.reg
+                        .finish_operation(op, status, Some(&format!("{outcome:?}")))?;
                     return Ok(Report { outcome, log });
                 }
             }
         }
         self.reg.finish_operation(op, "ok", None)?;
-        Ok(Report { outcome: Outcome::Done, log })
+        Ok(Report {
+            outcome: Outcome::Done,
+            log,
+        })
     }
 
-    fn roll_back(&self, undo: Vec<Undo>, step: String, error: String, say: &mut dyn FnMut(&str)) -> Outcome {
+    fn roll_back(
+        &self,
+        undo: Vec<Undo>,
+        step: String,
+        error: String,
+        say: &mut dyn FnMut(&str),
+    ) -> Outcome {
         let mut undo_errors = vec![];
         let mut restart: Option<Vec<String>> = None;
         let mut env_restored = false;
@@ -125,7 +162,9 @@ impl Applier<'_> {
                     return Outcome::Stopped {
                         step,
                         error,
-                        note: format!("could not roll back past an earlier step that can't be undone: {what}"),
+                        note: format!(
+                            "could not roll back past an earlier step that can't be undone: {what}"
+                        ),
                     };
                 }
                 Undo::Nothing => Ok(()),
@@ -148,7 +187,9 @@ impl Applier<'_> {
                 }
                 Undo::DeleteBranchRow(id) => self.reg.delete_branch(id),
                 Undo::DeleteSnapshotRow(id) => self.reg.delete_snapshot(id),
-                Undo::RestoreFiles { branch_id, files } => self.reg.set_branch_files(branch_id, &files),
+                Undo::RestoreFiles { branch_id, files } => {
+                    self.reg.set_branch_files(branch_id, &files)
+                }
             };
             if let Err(e) = r {
                 undo_errors.push(format!("{e:#}"));
@@ -162,7 +203,11 @@ impl Applier<'_> {
                 undo_errors.push(format!("{e:#}"));
             }
         }
-        Outcome::RolledBack { step, error, undo_errors }
+        Outcome::RolledBack {
+            step,
+            error,
+            undo_errors,
+        }
     }
 
     /// Run one step; returns how to undo it and an optional detail line.
@@ -178,7 +223,10 @@ impl Applier<'_> {
             }
             Step::CloneDatabase { source, target, .. } => {
                 let method = self.pg.clone_database(source, target)?;
-                (Undo::DropDb(target.clone()), Some(format!("copied using {method:?}")))
+                (
+                    Undo::DropDb(target.clone()),
+                    Some(format!("copied using {method:?}")),
+                )
             }
             Step::CreateEmptyDatabase { name } => {
                 self.pg.create_empty(name)?;
@@ -194,13 +242,25 @@ impl Applier<'_> {
             }
             Step::RenameDatabase { from, to } => {
                 self.pg.rename_database(from, to)?;
-                (Undo::RenameBack { from: to.clone(), to: from.clone() }, None)
+                (
+                    Undo::RenameBack {
+                        from: to.clone(),
+                        to: from.clone(),
+                    },
+                    None,
+                )
             }
-            Step::RewriteEnv { file, variable, from_db, to_db } => {
+            Step::RewriteEnv {
+                file,
+                variable,
+                from_db,
+                to_db,
+            } => {
                 let path = self.root.join(file);
-                let content =
-                    std::fs::read_to_string(&path).with_context(|| format!("reading {}", path.display()))?;
-                let current = envfile::get(&content, variable).and_then(|v| envfile::db_name_in_value(&v));
+                let content = std::fs::read_to_string(&path)
+                    .with_context(|| format!("reading {}", path.display()))?;
+                let current =
+                    envfile::get(&content, variable).and_then(|v| envfile::db_name_in_value(&v));
                 if current.as_deref() != Some(from_db.as_str()) {
                     bail!(
                         "{variable} in {file} changed since the plan was made (expected {from_db}, found {})",
@@ -219,7 +279,13 @@ impl Applier<'_> {
                 process::shell(command, self.root)?;
                 (Undo::Nothing, None)
             }
-            Step::RegisterBranch { git_branch, db_name, parent_db, base_commit, migration_files } => {
+            Step::RegisterBranch {
+                git_branch,
+                db_name,
+                parent_db,
+                base_commit,
+                migration_files,
+            } => {
                 let parent_id = match parent_db {
                     Some(p) => self.reg.branch_by_db(self.project.id, p)?.map(|b| b.id),
                     None => None,
@@ -237,16 +303,33 @@ impl Applier<'_> {
                 )?;
                 (Undo::DeleteBranchRow(b.id), None)
             }
-            Step::RecordMigrations { db_name, migration_files } => {
+            Step::RecordMigrations {
+                db_name,
+                migration_files,
+            } => {
                 let b = self.branch(db_name)?;
                 self.reg.set_branch_files(b.id, migration_files)?;
-                (Undo::RestoreFiles { branch_id: b.id, files: b.migration_files }, None)
+                (
+                    Undo::RestoreFiles {
+                        branch_id: b.id,
+                        files: b.migration_files,
+                    },
+                    None,
+                )
             }
             Step::TouchBranch { db_name } => {
                 self.reg.touch_branch(self.branch(db_name)?.id)?;
                 (Undo::Nothing, None)
             }
-            Step::RegisterSnapshot { branch_db, db_name, seq, label, commit_id, migration_files, size_bytes } => {
+            Step::RegisterSnapshot {
+                branch_db,
+                db_name,
+                seq,
+                label,
+                commit_id,
+                migration_files,
+                size_bytes,
+            } => {
                 let b = self.branch(branch_db)?;
                 let s = self.reg.insert_snapshot(&NewSnapshot {
                     branch_id: b.id,
@@ -301,7 +384,11 @@ mod tests {
         };
         let pg = Postgres::new(argv.split_whitespace().map(String::from).collect(), None);
         let dir = tempfile::tempdir().unwrap();
-        std::fs::write(dir.path().join(".env"), "DATABASE_URL=postgres://u@db/other_db\n").unwrap();
+        std::fs::write(
+            dir.path().join(".env"),
+            "DATABASE_URL=postgres://u@db/other_db\n",
+        )
+        .unwrap();
         let reg = Registry::open_in_memory().unwrap();
         let project = reg.upsert_project("/t", "t", "postgres", "db").unwrap();
         let cfg: Config = toml::from_str(
@@ -323,14 +410,25 @@ mod tests {
         )
         .unwrap();
         let compose = Compose::new(dir.path(), vec![]);
-        let applier = Applier { cfg: &cfg, root: dir.path(), compose: &compose, pg: &pg, reg: &reg, project: &project };
+        let applier = Applier {
+            cfg: &cfg,
+            root: dir.path(),
+            compose: &compose,
+            pg: &pg,
+            reg: &reg,
+            project: &project,
+        };
 
         pg.drop_database("st_apply_src_db").unwrap();
         pg.drop_database("st_apply_dst_db").unwrap();
         pg.create_empty("st_apply_src_db").unwrap();
 
         let mut plan = Plan::new(PlanKind::Switch, "test");
-        plan.push(Step::CloneDatabase { source: "st_apply_src_db".into(), target: "st_apply_dst_db".into(), size_bytes: 0 });
+        plan.push(Step::CloneDatabase {
+            source: "st_apply_src_db".into(),
+            target: "st_apply_dst_db".into(),
+            size_bytes: 0,
+        });
         // The env file points at other_db, not st_apply_src_db, so this step fails.
         plan.push(Step::RewriteEnv {
             file: ".env".into(),
@@ -339,9 +437,16 @@ mod tests {
             to_db: "st_apply_dst_db".into(),
         });
         let report = applier.apply(&plan, &mut |_| {}).unwrap();
-        assert!(matches!(report.outcome, Outcome::RolledBack { .. }), "{:?}", report.outcome);
+        assert!(
+            matches!(report.outcome, Outcome::RolledBack { .. }),
+            "{:?}",
+            report.outcome
+        );
         assert!(!pg.exists("st_apply_dst_db").unwrap(), "clone was undone");
-        assert_eq!(std::fs::read_to_string(dir.path().join(".env")).unwrap(), "DATABASE_URL=postgres://u@db/other_db\n");
+        assert_eq!(
+            std::fs::read_to_string(dir.path().join(".env")).unwrap(),
+            "DATABASE_URL=postgres://u@db/other_db\n"
+        );
         pg.drop_database("st_apply_src_db").unwrap();
     }
 }

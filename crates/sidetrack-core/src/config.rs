@@ -130,7 +130,10 @@ impl Config {
             "routing.mode = {:?} is not supported yet (only \"env\")",
             self.routing.mode
         );
-        anyhow::ensure!(!self.migrations.dirs.is_empty(), "migrations.dirs must not be empty");
+        anyhow::ensure!(
+            !self.migrations.dirs.is_empty(),
+            "migrations.dirs must not be empty"
+        );
         Ok(())
     }
 
@@ -177,7 +180,10 @@ mod tests {
         let cfg = sample();
         cfg.save(dir.path()).unwrap();
         let text = std::fs::read_to_string(Config::path(dir.path())).unwrap();
-        assert!(!text.contains("[compose]"), "empty sections are omitted:\n{text}");
+        assert!(
+            !text.contains("[compose]"),
+            "empty sections are omitted:\n{text}"
+        );
         assert_eq!(Config::load(dir.path()).unwrap(), cfg);
     }
 
