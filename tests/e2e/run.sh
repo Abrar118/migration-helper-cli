@@ -74,8 +74,9 @@ echo "migrate refused, as expected"
 
 step "back to feature/a: just a switch, nothing undone"
 "$st" status || true
-"$st" switch --yes
+"$st" switch --yes | tee "$work/switch.txt"
 [ "$(active_db)" = feature_a_db ] || fail "expected feature_a_db"
+grep -q "schema vs feature_b_db: +1 table (orders) · −4 tables" "$work/switch.txt" || fail "switch should summarize the schema difference"
 migrate | tail -1 | grep -q "up to date" || fail "feature/a's migrations should accept feature_a_db"
 
 step "snapshot and reset"
@@ -85,6 +86,22 @@ docker compose exec -T api sh -c 'psql "$DATABASE_URL" -qc "INSERT INTO orders (
 "$st" reset --to before-experiment --yes
 [ "$(sql feature_a_db "SELECT count(*) FROM orders")" = 0 ] || fail "reset should bring back the snapshot"
 migrate | tail -1 | grep -q "up to date" || fail "after reset the DB should still match feature/a"
+
+step "snapshot retention keeps labelled and newest snapshots"
+"$st" snapshot --yes >/dev/null
+"$st" snapshot --yes >/dev/null
+printf '\n[snapshots]\nkeep = 1\n' >> sidetrack.toml
+"$st" gc --yes
+db_exists() { [ "$(sql postgres "SELECT count(*) FROM pg_database WHERE datname = '$1'")" = 1 ]; }
+db_exists feature_a_db__s1 || fail "labelled snapshot must be kept"
+db_exists feature_a_db__s3 || fail "newest snapshot must be kept"
+if db_exists feature_a_db__s2; then fail "older unlabelled snapshot should be dropped"; fi
+git checkout -q -- sidetrack.toml
+
+step "bench times a copy and cleans up"
+"$st" bench --from app_dev --yes | tee "$work/bench.txt"
+grep -q "too small to estimate" "$work/bench.txt" || fail "bench should explain why it gives no estimate for a tiny database"
+if db_exists app_dev__bench; then fail "bench must drop its copy"; fi
 
 step "a branch forked from main after main moved on"
 git checkout -q main
@@ -121,5 +138,13 @@ if command -v script >/dev/null 2>&1; then
   grep -q "Apply?" "$work/hook.txt" || fail "the hook should have asked"
   [ "$(active_db)" = feature_a_db ] || fail "the hook should have switched to feature_a_db"
 fi
+
+step "rename follows git branch -m"
+git branch -m feature/c feature/renamed
+"$st" rename feature/c feature/renamed --yes
+db_exists feature_renamed_db || fail "feature_c_db should now be feature_renamed_db"
+if db_exists feature_c_db; then fail "feature_c_db should be gone"; fi
+"$st" list | grep -q "feature/renamed" || fail "list should show the renamed branch"
+"$st" doctor | grep -q "disk space" || fail "doctor should report disk space"
 
 printf '\n\033[1;32mAll end-to-end checks passed.\033[0m\n'

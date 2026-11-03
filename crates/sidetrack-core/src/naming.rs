@@ -36,6 +36,11 @@ pub fn snapshot_db_name(db: &str, id: i64) -> String {
     suffixed(db, &format!("__s{id}"))
 }
 
+/// Temporary copy made by `sidetrack bench`.
+pub fn bench_db_name(db: &str) -> String {
+    suffixed(db, "__bench")
+}
+
 /// Temporary name used while resetting a database.
 pub fn temp_db_name(db: &str) -> String {
     suffixed(db, "__tmp")

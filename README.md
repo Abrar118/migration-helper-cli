@@ -52,6 +52,8 @@ sidetrack: Create feature_c_db for feature/c and switch to it (from app_dev) —
 - **Switching to a branch that has a DB branch:** rewrites the DB name in your env file, recreates the app containers, then runs any migrations the branch has that the database doesn't.
 - **Switching to a branch for the first time:** copies the closest compatible database, then migrates forward. "Compatible" means it holds no migration the new branch doesn't know, judged from the migration files in git, so it works with any migration tool. It picks the copy that needs the fewest migrations run. If nothing is compatible, it builds from an empty database (and runs your seed command, if configured).
 - **Copies** use Postgres template databases (`CREATE DATABASE … TEMPLATE`), so there's no dump and restore. Postgres needs nothing connected to the source while copying, so sidetrack stops the app services first when the source is the database in use.
+- **Switch plans show what changes in the schema**, e.g. `schema vs feature_b_db: +1 table (orders) · −4 tables (…)`. Use `-v` for column-level changes.
+- **Plans check disk space** in the database container first. One that won't fit is refused; one that would leave less than 1 GB (or 10%) free gets a warning.
 - **Every change is a plan first.** `--dry-run` shows it, `--json` prints it for scripts, and if a step fails, completed steps are undone. The one exception is your own migration command failing: the new database then stays selected so you can debug it.
 - **State** lives in a small SQLite registry (`~/.local/share/sidetrack/registry.sqlite`). The database server is treated as the truth, and mismatches are shown, never silently fixed.
 
@@ -70,7 +72,9 @@ sidetrack: Create feature_c_db for feature/c and switch to it (from app_dev) —
 | `sidetrack delete <branch>` | Drop a DB branch and its snapshots |
 | `sidetrack gc` | Drop DB branches whose git branch was deleted or merged |
 | `sidetrack hook install` / `uninstall` | Manage the `post-checkout` hook |
-| `sidetrack doctor` | Check Docker, Postgres, the env file, the hook and more |
+| `sidetrack rename <old> <new>` | Follow `git branch -m`: move the DB branch to the new name |
+| `sidetrack bench [--from X]` | Time a copy of a database here (then delete the copy) and estimate copy times for bigger ones |
+| `sidetrack doctor` | Check Docker, Postgres, disk space, the env file, the hook and more |
 
 Global flags: `--dry-run`, `--json`, `--yes`, `-v` (show registry bookkeeping steps), `-C <dir>`.
 
@@ -101,6 +105,9 @@ command = "docker compose exec -T api alembic upgrade head"
 
 [git]
 main_branch = "main"      # used by `gc` to find merged branches
+
+[snapshots]
+keep = 5                  # optional: `gc` drops older unlabelled snapshots per branch
 ```
 
 Detected migration tools: Alembic, Django, Prisma, Rails, Flyway and Knex. Anything else works too: point `dirs` at the migration folder(s) and set `command`.

@@ -140,6 +140,8 @@ fn run_inner(dir: &Path, flag: &str) -> Result<()> {
         );
         return Ok(());
     }
+    let mut plan = plan;
+    ws.annotate_schema(&mut plan);
     println!();
     let ok = ui::run_plan(&ws, &project, &plan, &Opts::default())?;
     if !ok {

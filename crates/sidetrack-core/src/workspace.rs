@@ -10,8 +10,10 @@ use crate::config::Config;
 use crate::engine::postgres::Postgres;
 use crate::envfile;
 use crate::git::Git;
-use crate::planner::{Planner, World};
+use crate::plan::{Plan, PlanKind, Step};
+use crate::planner::{DiskSpace, Planner, World};
 use crate::registry::{self, Project, Registry};
+use crate::schema;
 
 pub struct Workspace {
     pub root: PathBuf,
@@ -98,10 +100,55 @@ impl Workspace {
             connections: self.pg.connections_by_db()?,
             active_db: self.active_db()?,
             env_file_tracked: self.git.is_tracked(&self.cfg.routing.file)?,
+            disk: self.disk_space(),
             server_dbs,
             running_services,
             project,
         })
+    }
+
+    /// Free and total space where the database container keeps its data.
+    /// Only known when psql runs inside the compose service (the default).
+    pub fn disk_space(&self) -> Option<DiskSpace> {
+        if self.cfg.database.psql.is_some() {
+            return None;
+        }
+        let out = self
+            .compose
+            .exec(
+                &self.cfg.database.service,
+                &[
+                    "sh",
+                    "-c",
+                    "df -Pk \"${PGDATA:-/var/lib/postgresql/data}\" | tail -n 1",
+                ],
+            )
+            .ok()?;
+        parse_df(&out)
+    }
+
+    /// For a switch between two existing databases, attach a summary of how the
+    /// target's tables and columns differ from the current ones. Best effort:
+    /// any error just leaves the plan without a summary.
+    pub fn annotate_schema(&self, plan: &mut Plan) {
+        if plan.kind != PlanKind::Switch {
+            return;
+        }
+        let Some((from, to)) = plan.steps.iter().find_map(|s| match s {
+            Step::RewriteEnv { from_db, to_db, .. } => Some((from_db.clone(), to_db.clone())),
+            _ => None,
+        }) else {
+            return;
+        };
+        let created_now = plan.steps.iter().any(|s| {
+            matches!(s, Step::CloneDatabase { target, .. } | Step::CreateEmptyDatabase { name: target } if *target == to)
+        });
+        if created_now {
+            return;
+        }
+        if let (Ok(a), Ok(b)) = (self.pg.schema(&from), self.pg.schema(&to)) {
+            plan.schema = Some(schema::diff(&from, &to, &a, &b));
+        }
     }
 
     pub fn planner<'a>(&'a self, world: &'a World) -> Planner<'a> {
@@ -129,5 +176,32 @@ pub fn postgres_for(cfg: &Config, compose: &Compose) -> Postgres {
     match &cfg.database.psql {
         Some(argv) => Postgres::new(argv.clone(), Some(compose.dir().to_path_buf())),
         None => Postgres::in_compose(compose, &cfg.database.service, &cfg.database.user),
+    }
+}
+
+/// Parse the last line of `df -Pk`: filesystem, 1K-blocks, used, available, …
+fn parse_df(out: &str) -> Option<DiskSpace> {
+    let line = out.lines().rev().find(|l| !l.trim().is_empty())?;
+    let cols: Vec<&str> = line.split_whitespace().collect();
+    let total: u64 = cols.get(1)?.parse().ok()?;
+    let avail: u64 = cols.get(3)?.parse().ok()?;
+    Some(DiskSpace {
+        free_bytes: avail * 1024,
+        total_bytes: total * 1024,
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parses_df_output() {
+        let out = "Filesystem     1024-blocks      Used Available Capacity Mounted on\n\
+                   overlay          263174212  61425604 188309384      25% /\n";
+        let d = parse_df(out).unwrap();
+        assert_eq!(d.total_bytes, 263174212 * 1024);
+        assert_eq!(d.free_bytes, 188309384 * 1024);
+        assert!(parse_df("garbage").is_none());
     }
 }

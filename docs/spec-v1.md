@@ -251,10 +251,11 @@ Global flags: `--dry-run`, `--json`, `--yes`.
 
 ### P1 — fast follow
 
-- **Schema diff in plans:** `pg_dump --schema-only` of the current vs. target DB, shown as a diff in the switch plan.
-- **Disk guard:** warn in the plan when Docker's free disk would drop below a threshold.
-- `sidetrack rename` that mirrors `git branch -m`.
-- Snapshot retention policy (e.g. keep the last N per branch).
+- ✅ **Schema diff in plans** (v1.1): table and column summary of the current vs. target DB, from `information_schema` rather than `pg_dump`. Column detail with `-v`.
+- ✅ **Disk guard** (v1.1): plans that won't fit are refused; plans that leave < 1 GB or 10% free warn.
+- ✅ `sidetrack rename` that mirrors `git branch -m` (v1.1).
+- ✅ Snapshot retention policy (v1.1): `[snapshots] keep = N`, applied by `gc`; labelled snapshots are kept.
+- ✅ `sidetrack bench` (v1.1, added): times a real copy on this machine for the §10 spike.
 - First-class Django / Flyway / Prisma / Rails readers that can also check the DB's recorded migration version against the files (drift detection beyond file sets).
 - Clone-capability probe that tells the user how to get instant clones (PG 18 on btrfs/XFS/APFS).
 

@@ -5,6 +5,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::engine::postgres::format_bytes;
 use crate::registry::FileSet;
+use crate::schema::SchemaDiff;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -16,6 +17,8 @@ pub enum PlanKind {
     Reset,
     Delete,
     Gc,
+    Bench,
+    Rename,
 }
 
 impl PlanKind {
@@ -28,6 +31,8 @@ impl PlanKind {
             PlanKind::Reset => "reset",
             PlanKind::Delete => "delete",
             PlanKind::Gc => "gc",
+            PlanKind::Bench => "bench",
+            PlanKind::Rename => "rename",
         }
     }
 }
@@ -39,6 +44,10 @@ pub struct Plan {
     pub steps: Vec<Step>,
     pub warnings: Vec<String>,
     pub notes: Vec<String>,
+    /// How the target database's schema differs from the current one (switches
+    /// between existing DB branches only).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub schema: Option<SchemaDiff>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -65,6 +74,10 @@ pub enum Step {
         name: String,
     },
     DropDatabase {
+        name: String,
+    },
+    /// Drop a copy sidetrack made for itself in this same plan (e.g. `bench`).
+    DropTemporaryDatabase {
         name: String,
     },
     RenameDatabase {
@@ -119,6 +132,12 @@ pub enum Step {
     ForgetSnapshot {
         db_name: String,
     },
+    /// Point a registry entry at a new database name and git branch (`rename`).
+    RelinkBranch {
+        db_name: String,
+        new_db_name: String,
+        new_git_branch: String,
+    },
 }
 
 impl Step {
@@ -132,6 +151,7 @@ impl Step {
                 | Step::RegisterSnapshot { .. }
                 | Step::ForgetBranch { .. }
                 | Step::ForgetSnapshot { .. }
+                | Step::RelinkBranch { .. }
         )
     }
 
@@ -162,6 +182,7 @@ impl Step {
             Step::CreateEmptyDatabase { name } => format!("Create empty database {name}"),
             Step::FreezeDatabase { name } => format!("Freeze {name} (no connections allowed)"),
             Step::DropDatabase { name } => format!("DROP database {name}"),
+            Step::DropTemporaryDatabase { name } => format!("Drop the temporary copy {name}"),
             Step::RenameDatabase { from, to } => format!("Rename {from} → {to}"),
             Step::RewriteEnv {
                 file,
@@ -201,6 +222,11 @@ impl Step {
             Step::RegisterSnapshot { db_name, .. } => format!("Record snapshot {db_name}"),
             Step::ForgetBranch { db_name } => format!("Forget {db_name}"),
             Step::ForgetSnapshot { db_name } => format!("Forget snapshot {db_name}"),
+            Step::RelinkBranch {
+                db_name,
+                new_db_name,
+                new_git_branch,
+            } => format!("Link git branch {new_git_branch} → {new_db_name} (was {db_name})"),
         }
     }
 }
@@ -223,6 +249,7 @@ impl Plan {
     pub fn new(kind: PlanKind, summary: impl Into<String>) -> Self {
         Self {
             kind,
+            schema: None,
             summary: summary.into(),
             steps: vec![],
             warnings: vec![],
@@ -261,6 +288,9 @@ impl Plan {
         }
         for n in &self.notes {
             out.push_str(&format!("  · {n}\n"));
+        }
+        if let Some(diff) = &self.schema {
+            out.push_str(&diff.render(verbose));
         }
         let shown: Vec<&Step> = self
             .steps

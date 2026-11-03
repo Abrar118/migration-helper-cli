@@ -335,6 +335,15 @@ impl Registry {
         Ok(())
     }
 
+    /// Point a branch row at a new database name and git branch.
+    pub fn relink_branch(&self, id: i64, db_name: &str, git_branch: &str) -> Result<()> {
+        self.conn.execute(
+            "UPDATE db_branches SET db_name = ?2, git_branch = ?3 WHERE id = ?1",
+            params![id, db_name, git_branch],
+        )?;
+        Ok(())
+    }
+
     pub fn touch_branch(&self, id: i64) -> Result<()> {
         self.conn.execute(
             "UPDATE db_branches SET last_used_at = ?2 WHERE id = ?1",

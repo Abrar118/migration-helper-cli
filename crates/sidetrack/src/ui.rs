@@ -66,6 +66,18 @@ pub fn confirm(question: &str, opts: &Opts) -> Result<bool> {
 
 /// Show a plan, get approval, apply it. Returns false if it failed.
 pub fn run_plan(ws: &Workspace, project: &Project, plan: &Plan, opts: &Opts) -> Result<bool> {
+    run_plan_then(ws, project, plan, opts, |_| None)
+}
+
+/// Like `run_plan`, then summarize the applied report: `summarize` returns text for
+/// terminals and a value added to the JSON output as `"summary"`.
+pub fn run_plan_then(
+    ws: &Workspace,
+    project: &Project,
+    plan: &Plan,
+    opts: &Opts,
+    summarize: impl Fn(&Report) -> Option<(String, serde_json::Value)>,
+) -> Result<bool> {
     if !opts.json {
         print!("{}", plan.render(opts.verbose));
     }
@@ -129,13 +141,22 @@ pub fn run_plan(ws: &Workspace, project: &Project, plan: &Plan, opts: &Opts) -> 
             eprintln!("{line}");
         }
     })?;
+    let summary = if report.ok() {
+        summarize(&report)
+    } else {
+        None
+    };
     if opts.json {
+        let value = summary.map(|(_, v)| v);
         println!(
             "{}",
-            serde_json::json!({ "plan": plan, "applied": true, "report": report })
+            serde_json::json!({ "plan": plan, "applied": true, "report": report, "summary": value })
         );
     } else {
         print_outcome(&report);
+        if let Some((text, _)) = summary {
+            print!("{text}");
+        }
     }
     Ok(report.ok())
 }

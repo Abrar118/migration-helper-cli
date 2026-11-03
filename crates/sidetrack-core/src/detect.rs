@@ -618,6 +618,7 @@ impl Detection {
             },
             compose: ComposeConfig::default(),
             git: GitConfig { main_branch },
+            snapshots: Default::default(),
         })
     }
 
