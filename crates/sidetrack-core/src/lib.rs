@@ -5,6 +5,7 @@
 pub mod apply;
 pub mod compose;
 pub mod config;
+pub mod detect;
 pub mod engine;
 pub mod envfile;
 pub mod git;

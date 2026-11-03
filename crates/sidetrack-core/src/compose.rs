@@ -176,18 +176,19 @@ impl Service {
         }
     }
 
-    /// Host directories this service can see: its build context and bind mounts.
+    /// Host directories this service can see, with their path inside the container
+    /// when known. Bind mounts come first (exact container path), then the build context.
     pub fn host_paths(&self) -> Vec<(PathBuf, Option<String>)> {
         let mut out = vec![];
-        if let Some(ctx) = self.build.as_ref().and_then(|b| b.context.clone()) {
-            out.push((PathBuf::from(ctx), None));
-        }
         for v in &self.volumes {
             if v.kind.as_deref() == Some("bind") {
                 if let Some(src) = &v.source {
                     out.push((PathBuf::from(src), v.target.clone()));
                 }
             }
+        }
+        if let Some(ctx) = self.build.as_ref().and_then(|b| b.context.clone()) {
+            out.push((PathBuf::from(ctx), None));
         }
         out
     }
