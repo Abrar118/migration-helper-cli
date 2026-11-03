@@ -126,6 +126,8 @@ database = "app_dev"          # the name your app connects to
 listen = "0.0.0.0:54320"      # default 127.0.0.1:54320
 restart = ["api"]             # stopped only while its database is being copied
 # upstream = "127.0.0.1:5432" # default: the port compose publishes for the db service
+# file = ".env"               # optional: git worktrees set their proxy port in this URL
+# variable = "DATABASE_URL"
 ```
 
 ```yaml
@@ -157,7 +159,8 @@ sidetrack status                     # shows its port (e.g. 54321) and what othe
 ```
 
 - **Shared server:** every worktree uses the main worktree's database server. Start only the app services in a worktree, e.g. `docker compose up -d --no-deps api`.
-- **Ports:** each linked worktree's proxy listens on the next free port after `routing.listen`, and keeps that port. Point that worktree's app at it.
+- **Ports:** each linked worktree's proxy listens on the next free port after `routing.listen`, and keeps that port. With `file` and `variable` set under `[routing]` (`init --proxy` keeps them), the first `switch` in a worktree points the app's URL at that port. If the worktree has no env file yet, it copies the main worktree's first.
+- **Removing a worktree** (`git worktree remove`) frees its port, and its database stops counting as in use. The DB branch itself stays until `sidetrack delete` or `gc` (once the git branch is deleted or merged).
 - **Protection:** sidetrack won't delete or rename a database another worktree is using, and `gc` keeps it.
 
 Detected migration tools: Alembic, Django, Prisma, Rails, Flyway and Knex. Anything else works too: point `dirs` at the migration folder(s) and set `command`.

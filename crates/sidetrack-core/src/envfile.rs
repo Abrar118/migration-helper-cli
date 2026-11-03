@@ -95,6 +95,66 @@ pub fn set_db_name(content: &str, key: &str, new_db: &str) -> Result<(String, St
     Ok((lines.join("\n"), old_db))
 }
 
+/// Byte range of the port in a URL value, or where one would go (empty range
+/// right after the host), plus the current port.
+fn url_port_span(value: &str) -> Option<(usize, usize, Option<u16>)> {
+    let start = value.find("://")? + 3;
+    let rest = &value[start..];
+    let auth_len = rest.find(['/', '?', '#']).unwrap_or(rest.len());
+    let auth = &rest[..auth_len];
+    let host_off = auth.rfind('@').map_or(0, |i| i + 1);
+    let host = &auth[host_off..];
+    let colon = if host.starts_with('[') {
+        host.find("]:").map(|i| i + 1)
+    } else {
+        host.rfind(':')
+    };
+    let end = start + auth_len;
+    Some(match colon {
+        Some(c) => (start + host_off + c + 1, end, host[c + 1..].parse().ok()),
+        None => (end, end, None),
+    })
+}
+
+/// The port in a URL value, if it has one.
+pub fn port_in_value(value: &str) -> Option<u16> {
+    url_port_span(value)?.2
+}
+
+/// Set the port of the URL in `key` (git worktrees: each has its own proxy port).
+pub fn set_port(content: &str, key: &str, port: u16) -> Result<String> {
+    let mut lines: Vec<String> = content.split('\n').map(str::to_string).collect();
+    let Some(idx) = lines
+        .iter()
+        .rposition(|l| parse_line(l).is_some_and(|p| p.key == key))
+    else {
+        bail!("variable {key} is not defined");
+    };
+    let line = lines[idx].clone();
+    let p = parse_line(&line).expect("matched above");
+    let value = p.unquoted();
+    let Some((a, b, _)) = url_port_span(&value) else {
+        bail!("{key} isn't a URL, so it has no port to set");
+    };
+    let colon = if a == b && !value[..a].ends_with(':') {
+        ":"
+    } else {
+        ""
+    };
+    let new_value = format!("{}{colon}{port}{}", &value[..a], &value[b..]);
+    let new_raw = match p.quote {
+        Some(q) => format!("{q}{new_value}{q}"),
+        None => new_value,
+    };
+    lines[idx] = format!(
+        "{}{}{}",
+        &line[..p.value_start],
+        new_raw,
+        &line[p.value_end..]
+    );
+    Ok(lines.join("\n"))
+}
+
 struct ParsedLine<'a> {
     key: &'a str,
     raw: &'a str,
@@ -222,5 +282,25 @@ mod tests {
         assert!(set_db_name("URL=postgres://db/${DB_NAME}\n", "URL", "x").is_err());
         assert!(set_db_name("A=1\n", "URL", "x").is_err());
         assert!(get("# URL=x\n", "URL").is_none());
+    }
+
+    #[test]
+    fn ports() {
+        let url = "postgresql://app:s@host.docker.internal:54320/app_dev?x=1";
+        assert_eq!(port_in_value(url), Some(54320));
+        assert_eq!(port_in_value("postgres://h/db"), None);
+        assert_eq!(port_in_value("app_dev"), None);
+        let env = format!("# c\nDATABASE_URL=\"{url}\"\nX=1\n");
+        let out = set_port(&env, "DATABASE_URL", 54321).unwrap();
+        assert!(
+            out.contains("@host.docker.internal:54321/app_dev?x=1\""),
+            "{out}"
+        );
+        assert!(out.starts_with("# c\n") && out.ends_with("X=1\n"));
+        let out = set_port("U=postgres://u@h/db\n", "U", 5).unwrap();
+        assert_eq!(out, "U=postgres://u@h:5/db\n");
+        let out = set_port("U=postgres://u@[::1]:7/db", "U", 8).unwrap();
+        assert_eq!(out, "U=postgres://u@[::1]:8/db");
+        assert!(set_port("U=app_dev", "U", 1).is_err());
     }
 }

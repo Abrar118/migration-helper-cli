@@ -118,6 +118,31 @@ impl Workspace {
         addr
     }
 
+    /// Proxy mode in a linked worktree: this worktree's proxy port and what its
+    /// env file says. `None` elsewhere, or when `routing.file` isn't set or is tracked.
+    pub fn worktree_env(&self) -> Option<crate::planner::WorktreeEnv> {
+        let r = &self.cfg.routing;
+        if !r.is_proxy() || !self.is_linked_worktree() || r.file.is_empty() || r.variable.is_empty()
+        {
+            return None;
+        }
+        if self.git.is_tracked(&r.file).unwrap_or(true) {
+            return None;
+        }
+        let port = self.proxy_listen().rsplit_once(':')?.1.parse().ok()?;
+        let content = std::fs::read_to_string(self.env_path()).ok();
+        let main_env = self.main_root.join(&r.file);
+        Some(crate::planner::WorktreeEnv {
+            port,
+            env_exists: content.is_some(),
+            env_port: content
+                .as_deref()
+                .and_then(|c| envfile::get(c, &r.variable))
+                .and_then(|v| envfile::port_in_value(&v)),
+            main_env: main_env.exists().then(|| main_env.display().to_string()),
+        })
+    }
+
     /// The database each *other* worktree's app uses: db name → worktree root.
     pub fn active_elsewhere(&self) -> BTreeMap<String, String> {
         let me = self.root.canonicalize().ok();
@@ -255,6 +280,8 @@ impl Workspace {
                 && self.git.is_tracked(&self.cfg.routing.file)?,
             proxy_running: self.cfg.routing.is_proxy().then(|| self.proxy_running()),
             elsewhere: self.active_elsewhere(),
+            linked_worktree: self.is_linked_worktree(),
+            worktree_env: self.worktree_env(),
             disk: self.disk_space(),
             readings,
             version_table,

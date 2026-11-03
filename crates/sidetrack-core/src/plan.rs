@@ -98,6 +98,14 @@ pub enum Step {
     ReleaseConnections {
         db: String,
     },
+    /// Proxy mode, git worktree: point the env file's URL at this worktree's
+    /// proxy port (copying the main worktree's env file first if there's none).
+    SetEnvPort {
+        file: String,
+        variable: String,
+        port: u16,
+        copy_from: Option<String>,
+    },
     /// Proxy mode: send the app's connections for `database` to `to_db`.
     SetProxyTarget {
         database: String,
@@ -206,6 +214,17 @@ impl Step {
             } => {
                 format!("Point {variable} in {file} at {to_db} (was {from_db})")
             }
+            Step::SetEnvPort {
+                file,
+                variable,
+                port,
+                copy_from,
+            } => match copy_from {
+                Some(from) => format!(
+                    "Copy {file} from {from} and point {variable} at this worktree's proxy port {port}"
+                ),
+                None => format!("Point {variable} in {file} at this worktree's proxy port {port}"),
+            },
             Step::HoldConnections { db } => {
                 format!("Hold new connections to {db} in the proxy while it's copied")
             }

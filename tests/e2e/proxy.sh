@@ -61,6 +61,8 @@ user = "app"
 mode = "proxy"
 database = "app_dev"
 listen = "0.0.0.0:54329"
+file = ".env"              # worktrees get their own port written here
+variable = "DATABASE_URL"
 restart = ["api"]
 
 [migrations]
@@ -70,6 +72,8 @@ command = "docker compose exec -T api sh /app/migrate.sh"
 version_table = "schema_migrations"
 version_column = "name"
 EOF
+printf '.env\n' > .gitignore
+printf 'DATABASE_URL=postgresql://app:secret@host.docker.internal:54329/app_dev\n' > .env
 git init -q -b main
 git config user.email e2e@example.com
 git config user.name e2e
@@ -118,7 +122,11 @@ git worktree add -q -b feature/w "$wt"
 "$st" -C "$wt" switch --yes 2>&1 | tee "$work/wt.txt"
 grep -q "Proxy running on 0.0.0.0:54330" "$work/wt.txt" || fail "the worktree's proxy should get the next port"
 grep -q "Create feature_w_db" "$work/wt.txt" || fail "the worktree should get its own DB branch"
-wt_sql() { docker compose exec -T api psql "postgresql://app:secret@host.docker.internal:54330/app_dev" -qtAX -c "$1"; }
+grep -q "Copy .env from" "$work/wt.txt" || fail "the worktree should get a copy of .env"
+grep -q "^DATABASE_URL=postgresql://app:secret@host.docker.internal:54330/app_dev$" "$wt/.env" \
+  || { cat "$wt/.env"; fail "the worktree's .env should point at its own proxy port"; }
+wt_url="$(sed -n 's/^DATABASE_URL=//p' "$wt/.env")"
+wt_sql() { docker compose exec -T api psql "$wt_url" -qtAX -c "$1"; }
 [ "$(wt_sql 'select current_database()')" = feature_w_db ] || fail "the worktree's app_dev should mean feature_w_db"
 [ "$(app_sql 'select current_database()')" = app_dev ] || fail "the main worktree should still be on app_dev"
 "$st" -C "$wt" status | tee "$work/wt-status.txt"
@@ -127,6 +135,9 @@ grep -q "Elsewhere:   app_dev" "$work/wt-status.txt" || fail "status should show
 if "$st" delete feature/w --yes 2>"$work/del.txt"; then fail "deleting a database another worktree uses should be refused"; fi
 grep -q "in use in the worktree" "$work/del.txt" || fail "delete should say which worktree uses it"
 "$st" -C "$wt" proxy --stop >/dev/null
+git worktree remove --force "$wt"
+if "$st" status | grep -q "Elsewhere:"; then fail "a removed worktree shouldn't count as using a database"; fi
+"$st" delete feature/w --yes >/dev/null || fail "after the worktree is gone, its database can be deleted"
 
 step "status and doctor know about the proxy"
 "$st" status | tee "$work/status.txt"

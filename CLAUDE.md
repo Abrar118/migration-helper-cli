@@ -108,6 +108,7 @@ Detection is a pure function of those models plus the repo files, so tests feed 
 - `Workspace.main_root` is the main worktree. The registry key (`root_key`) and `db_compose` (database service, psql, port, df) use it. `compose` is this checkout's own, for app services.
 - Per worktree, under `git_path`: proxy target, pid, log, and `sidetrack-proxy-listen` (the next free port after `routing.listen`, saved once). The hold file is in the common git dir (`Workspace::proxy_hold_path`).
 - `World.elsewhere` (db → worktree) protects other worktrees' databases. `delete` and `rename` refuse them, `gc` keeps them, and copies hold or warn.
+- In a linked worktree, `switch` starts with `Step::SetEnvPort` (`Planner::push_worktree_env`, `World.worktree_env`). It points `routing.file`'s URL at the worktree's proxy port, copying the main worktree's env file first if there's none.
 
 ### Naming (`naming.rs`)
 
