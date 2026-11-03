@@ -73,6 +73,10 @@ pub struct RoutingConfig {
     /// port compose publishes for the database service.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub upstream: Option<String>,
+    /// Proxy mode: start the proxy in the background when a command needs it
+    /// (default true).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub autostart: Option<bool>,
 }
 
 pub const DEFAULT_PROXY_LISTEN: &str = "127.0.0.1:54320";
@@ -80,6 +84,10 @@ pub const DEFAULT_PROXY_LISTEN: &str = "127.0.0.1:54320";
 impl RoutingConfig {
     pub fn is_proxy(&self) -> bool {
         self.mode == "proxy"
+    }
+
+    pub fn autostart(&self) -> bool {
+        self.autostart.unwrap_or(true)
     }
 
     pub fn listen_addr(&self) -> &str {
@@ -229,6 +237,7 @@ mod tests {
                 database: None,
                 listen: None,
                 upstream: None,
+                autostart: None,
             },
             migrations: MigrationsConfig {
                 tool: "alembic".into(),

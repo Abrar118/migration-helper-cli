@@ -96,7 +96,10 @@ Detection is a pure function of those models plus the repo files, so tests feed 
 - It rewrites `database` in the startup message only when it equals `routing.database`, and leaves other names alone.
 - After that it only relays bytes, so authentication passes through untouched.
 - A watcher polls the target file, and when the target changes it closes the app's connections to the old database.
-- Plans use `Step::SetProxyTarget` instead of `RewriteEnv`. They restart only the services that were stopped for a copy.
+- Plans use `Step::SetProxyTarget` instead of `RewriteEnv`.
+- When the proxy is running, copies use `HoldConnections` / `ReleaseConnections` (`Planner::push_pause` / `push_unpause`) instead of stopping the app. The hold file sits next to the target and expires.
+- Without a running proxy, plans stop the app and start only the services that were stopped.
+- The CLI and the hook start the proxy before planning (`autostart_proxy`, `routing.autostart`).
 - `sidetrack proxy --daemon` re-runs the binary in the background (pid and log in `.git/`); `--stop` kills it. `init --proxy` writes proxy-mode config (`RoutingConfig::use_proxy`).
 - Tests use a fake upstream (unit) and `tests/e2e/proxy.sh` (real Docker).
 

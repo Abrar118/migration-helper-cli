@@ -171,6 +171,41 @@ pub fn write_target(path: &std::path::Path, db: &str) -> io::Result<()> {
     std::fs::rename(tmp, path)
 }
 
+/// File that asks the proxy to hold new connections to one database while it's
+/// being copied (next to the target file).
+pub fn hold_path(target_file: &std::path::Path) -> PathBuf {
+    target_file.with_file_name("sidetrack-proxy-hold")
+}
+
+fn now_secs() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0)
+}
+
+/// Hold new connections to `db` for at most `ttl` (a safety net if sidetrack dies
+/// before releasing them).
+pub fn write_hold(path: &std::path::Path, db: &str, ttl: Duration) -> io::Result<()> {
+    let tmp = path.with_extension("tmp");
+    std::fs::write(&tmp, format!("{db} {}\n", now_secs() + ttl.as_secs()))?;
+    std::fs::rename(tmp, path)
+}
+
+/// The database whose new connections are held, unless the hold expired.
+pub fn read_hold(path: &std::path::Path) -> Option<String> {
+    let text = std::fs::read_to_string(path).ok()?;
+    let (db, until) = text.trim().split_once(' ')?;
+    (until.parse::<u64>().ok()? > now_secs()).then(|| db.to_string())
+}
+
+pub fn release_hold(path: &std::path::Path) -> io::Result<()> {
+    match std::fs::remove_file(path) {
+        Err(e) if e.kind() != io::ErrorKind::NotFound => Err(e),
+        _ => Ok(()),
+    }
+}
+
 pub struct Proxy {
     /// The database name the app connects to.
     pub app_db: String,
@@ -271,7 +306,28 @@ impl Proxy {
             client.write_all(&error_response("sidetrack proxy: unsupported protocol"))?;
             return Ok(());
         }
-        let target = read_target(&self.target_file, &self.app_db);
+        // Wait while the database this connection would reach is being copied.
+        let asked = startup.param("database").map(|d| d.to_vec());
+        let hold_file = hold_path(&self.target_file);
+        let mut held = false;
+        let target = loop {
+            let target = read_target(&self.target_file, &self.app_db);
+            let reaches = match &asked {
+                Some(d) if d == self.app_db.as_bytes() => target.clone().into_bytes(),
+                Some(d) => d.clone(),
+                None => vec![],
+            };
+            match read_hold(&hold_file) {
+                Some(h) if h.as_bytes() == reaches.as_slice() => {
+                    if !held {
+                        log(&format!("connection {id}: holding while {h} is copied"));
+                        held = true;
+                    }
+                    thread::sleep(Duration::from_millis(50));
+                }
+                _ => break target,
+            }
+        };
         let rerouted = reroute(&mut startup, &self.app_db, &target);
         let mut server = match TcpStream::connect(&self.upstream) {
             Ok(s) => s,
@@ -436,6 +492,19 @@ mod tests {
         a.read_to_end(&mut rest).unwrap(); // returns once the proxy closes it
         let _b = connect(&addr, "app_dev");
         assert_eq!(seen.recv_timeout(t).unwrap(), "feature_a_db");
+
+        // A hold on feature_a_db makes new app connections wait until it's released.
+        let hold = hold_path(&target);
+        write_hold(&hold, "feature_a_db", Duration::from_secs(60)).unwrap();
+        let _c = connect(&addr, "app_dev");
+        assert!(
+            seen.recv_timeout(Duration::from_millis(300)).is_err(),
+            "held"
+        );
+        release_hold(&hold).unwrap();
+        assert_eq!(seen.recv_timeout(t).unwrap(), "feature_a_db");
+        write_hold(&hold, "feature_a_db", Duration::ZERO).unwrap();
+        assert_eq!(read_hold(&hold), None, "an expired hold is ignored");
 
         other.write_all(b"pong").unwrap();
         other.read_exact(&mut buf).unwrap();

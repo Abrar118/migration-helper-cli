@@ -222,6 +222,9 @@ fn dispatch(command: Command, dir: &Path, opts: &Opts) -> Result<bool> {
 /// Commands that build a plan and apply it.
 fn plan_command(command: Command, dir: &Path, opts: &Opts) -> Result<bool> {
     let ws = Workspace::open(dir)?;
+    if !opts.dry_run {
+        autostart_proxy(&ws);
+    }
     let world = ws.world()?;
     let planner = ws.planner(&world);
     let plan = match command {
@@ -1036,7 +1039,25 @@ fn proxy_daemon(dir: &Path, listen: Option<String>) -> Result<bool> {
         );
         return Ok(true);
     }
-    let (pid_file, log_file) = proxy_files(&ws)?;
+    println!("{}", start_proxy(&ws, listen.as_deref())?);
+    Ok(true)
+}
+
+/// Proxy mode with autostart on: start the proxy before planning, so plans can
+/// hold connections instead of stopping the app. Never fails the command.
+pub(crate) fn autostart_proxy(ws: &Workspace) {
+    let r = &ws.cfg.routing;
+    if r.is_proxy() && r.autostart() && !ws.proxy_running() {
+        match start_proxy(ws, None) {
+            Ok(msg) => eprintln!("sidetrack: {msg}"),
+            Err(e) => eprintln!("sidetrack: couldn't start the proxy: {e:#}"),
+        }
+    }
+}
+
+/// Start the proxy in the background and wait until it accepts connections.
+pub(crate) fn start_proxy(ws: &Workspace, listen: Option<&str>) -> Result<String> {
+    let (pid_file, log_file) = proxy_files(ws)?;
     let log = std::fs::OpenOptions::new()
         .create(true)
         .append(true)
@@ -1044,7 +1065,7 @@ fn proxy_daemon(dir: &Path, listen: Option<String>) -> Result<bool> {
         .with_context(|| format!("opening {}", log_file.display()))?;
     let mut cmd = std::process::Command::new(std::env::current_exe()?);
     cmd.arg("-C").arg(&ws.root).arg("proxy");
-    if let Some(l) = &listen {
+    if let Some(l) = listen {
         cmd.args(["--listen", l]);
     }
     cmd.stdin(std::process::Stdio::null())
@@ -1057,7 +1078,9 @@ fn proxy_daemon(dir: &Path, listen: Option<String>) -> Result<bool> {
         cmd.process_group(0);
     }
     let mut child = cmd.spawn().context("starting the proxy")?;
-    let addr = listen.unwrap_or_else(|| ws.cfg.routing.listen_addr().to_string());
+    let addr = listen
+        .unwrap_or_else(|| ws.cfg.routing.listen_addr())
+        .to_string();
     let probe = addr.replace("0.0.0.0", "127.0.0.1");
     for _ in 0..50 {
         if let Some(status) = child.try_wait()? {
@@ -1070,12 +1093,11 @@ fn proxy_daemon(dir: &Path, listen: Option<String>) -> Result<bool> {
         }
         if std::net::TcpStream::connect(&probe).is_ok() {
             std::fs::write(&pid_file, format!("{}\n", child.id()))?;
-            println!(
+            return Ok(format!(
                 "Proxy running on {addr} (pid {}). Log: {}. Stop it with `sidetrack proxy --stop`.",
                 child.id(),
                 log_file.display()
-            );
-            return Ok(true);
+            ));
         }
         std::thread::sleep(std::time::Duration::from_millis(100));
     }

@@ -87,8 +87,14 @@ step "a new branch: the app's app_dev now means feature_a_db"
 git checkout -q -b feature/a
 printf 'CREATE TABLE orders (id int);\n' > migrations/002_orders.sql
 git add -A && git commit -qm orders
-"$st" switch --yes | tee "$work/a.txt"
+"$st" proxy --stop >/dev/null
+"$st" switch --yes 2>&1 | tee "$work/a.txt"
+grep -q "Proxy running on" "$work/a.txt" || fail "switch should start the proxy (autostart)"
 grep -q "Route app_dev through the proxy to feature_a_db" "$work/a.txt" || fail "plan should route through the proxy"
+grep -q "Hold new connections to app_dev" "$work/a.txt" || fail "copying app_dev should hold connections, not stop the app"
+if grep -q "Stop api" "$work/a.txt"; then fail "the app shouldn't be stopped when the proxy can hold"; fi
+[ "$(docker compose ps --services --status running | grep -c api)" = 1 ] || fail "api should still be running"
+[ ! -e .git/sidetrack-proxy-hold ] || fail "the hold should be released"
 [ "$(app_sql 'select current_database()')" = feature_a_db ] || fail "app should be on feature_a_db"
 [ "$(app_sql "select count(*) from information_schema.tables where table_name = 'orders'")" = 1 ] \
   || fail "orders should exist in feature_a_db"
