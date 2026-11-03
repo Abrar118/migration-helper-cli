@@ -51,6 +51,7 @@ sidetrack: Create feature_c_db for feature/c and switch to it (from app_dev) —
 
 - **Switching to a branch that has a DB branch:** rewrites the DB name in your env file, recreates the app containers, then runs any migrations the branch has that the database doesn't.
 - **Switching to a branch for the first time:** copies the closest compatible database, then migrates forward. "Compatible" means it holds no migration the new branch doesn't know, judged from the migration files in git, so it works with any migration tool. It picks the copy that needs the fewest migrations run. If nothing is compatible, it builds from an empty database (and runs your seed command, if configured).
+- **What's applied comes from your migration tool's own table** when it has one: `alembic_version` (following the `down_revision` chain), `django_migrations`, `flyway_schema_history`, Rails' `schema_migrations`, `_prisma_migrations` or `knex_migrations`. A database holding a migration no branch knows any more is never used as a starting point. For other tools, set `version_table` / `version_column`. Without a table, sidetrack falls back to its own records.
 - **Copies** use Postgres template databases (`CREATE DATABASE … TEMPLATE`), so there's no dump and restore. Postgres needs nothing connected to the source while copying, so sidetrack stops the app services first when the source is the database in use.
 - **Switch plans show what changes in the schema**, e.g. `schema vs feature_b_db: +1 table (orders) · −4 tables (…)`. Use `-v` for column-level changes.
 - **Plans check disk space** in the database container first. One that won't fit is refused; one that would leave less than 1 GB (or 10%) free gets a warning.
@@ -102,6 +103,8 @@ tool = "alembic"
 dirs = ["alembic/versions"]                      # one file/folder per migration
 command = "docker compose exec -T api alembic upgrade head"
 # seed = "docker compose exec -T api python -m app.seed"   # after building from empty
+# version_table = "schema_migrations"   # where your tool records applied migrations
+# version_column = "name"               # (only needed for tools sidetrack doesn't know)
 
 [git]
 main_branch = "main"      # used by `gc` to find merged branches
@@ -116,7 +119,7 @@ Detected migration tools: Alembic, Django, Prisma, Rails, Flyway and Knex. Anyth
 
 - **Postgres only.** MySQL/MariaDB is next, then SQL Server and Oracle (see the spec's phasing).
 - **Routing by env file.** The app is recreated on each switch. A local proxy that needs no restarts is planned for v2.
-- **Migration state comes from file names in git.** sidetrack doesn't read your tool's version table yet. If you run migrations yourself, its record can lag behind. The only effect is that a later `switch` may run your migration command when there's nothing new to apply, which is harmless.
+- **Without a version table** (a tool sidetrack doesn't know, and no `version_table` set), migration state comes from file names in git and sidetrack's own records. If you run migrations yourself, those can lag behind. The only effect is that a later `switch` may run your migration command when there's nothing new to apply, which is harmless.
 - **Every DB branch is a full copy** unless you're on Postgres 18 with a copy-on-write filesystem. Use `gc` and `delete` to reclaim space.
 - **One database service per project.**
 
@@ -126,6 +129,7 @@ Detected migration tools: Alembic, Django, Prisma, Rails, Flyway and Knex. Anyth
 cargo test                       # unit tests; Postgres tests skip without a server
 SIDETRACK_TEST_PG="docker exec -i <container> psql -U postgres" cargo test   # include them
 tests/e2e/run.sh                 # full scenario in Docker (spec §1)
+tests/e2e/alembic.sh             # the same with real Alembic (needs alembic + psycopg on PATH)
 ```
 
 Layout:

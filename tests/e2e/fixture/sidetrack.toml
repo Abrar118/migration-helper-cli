@@ -14,6 +14,9 @@ restart = ["api"]
 tool = "generic"
 dirs = ["migrations"]
 command = "docker compose exec -T api sh /app/migrate.sh"
+# migrate.sh records applied files here, so sidetrack can read the truth.
+version_table = "schema_migrations"
+version_column = "name"
 
 [git]
 main_branch = "main"
