@@ -12,11 +12,12 @@ Last updated 2026-11-03. Read `CLAUDE.md` first, then this.
 | v2 local proxy (`proxy.rs`, `sidetrack proxy`, `routing.mode = "proxy"`) | merged (PR #5) |
 | Proxy follow-ups: `proxy --daemon` / `--stop`, `init --proxy` | merged (PR #6) |
 | More proxy follow-ups: autostart, holding connections during copies, detection with several Postgres images | merged (PR #7) |
-| **Git worktrees** (spec P2) | **PR #8, branch `feat/worktrees`.** Merge it before starting new work. |
+| Git worktrees (spec P2) | merged (PR #8) |
+| **Worktree edges:** env-file port wiring, env-mode warning, removal checks | **PR #9, branch `feat/worktree-edges`.** Merge it before starting new work. |
 
 `main` is protected. Every PR needs one approval, including a code-owner review (`@Abrar118`). The owner can bypass the rules. Force-pushes and deletion are blocked.
 
-Stale remote branches that can be deleted: `docs/v1-spec`, `feat/v1-cli`, `docs/claude-md-branch-rules`, `feat/v1.1`, `feat/migration-readers`, `feat/proxy`, `feat/proxy-followups`, `feat/proxy-followups-2`, `claude/serene-volta-pj0vti`.
+Stale remote branches that can be deleted: `docs/v1-spec`, `feat/v1-cli`, `docs/claude-md-branch-rules`, `feat/v1.1`, `feat/migration-readers`, `feat/proxy`, `feat/proxy-followups`, `feat/proxy-followups-2`, `feat/worktrees`, `claude/serene-volta-pj0vti`.
 
 ## Getting going on a new machine
 
@@ -51,10 +52,10 @@ See plan-v1.md, "Local proxy (v2)", decisions 17–25.
 - ✅ **Detection with several Postgres images:** done in PR #7.
 - ✅ **Copying without stopping the app:** done in PR #7 (holds). Rename still stops the app. It's rare, and the same `push_pause` helper would cover it.
 - **`init --proxy` end to end:** still untested. Detection refuses a DB name written literally in compose `environment:`, because env mode can't rewrite it. In proxy mode that's fine, so `init --proxy` should allow it. Then `tests/e2e/proxy.sh` could run `init --proxy` instead of writing `sidetrack.toml` by hand.
-- ✅ **Git worktrees:** done in PR #8. See plan-v1.md, "Git worktrees", decisions 26–28. Open edges:
-  - Each worktree's app must be pointed at its own port by hand. `status` shows the port. Printing a ready-to-paste URL would help.
-  - When a worktree is removed (`git worktree remove`), its DB branch stays until `gc`, or until its git branch is deleted or merged.
-  - In env mode, a containerized app in a worktree resolves `db` to its own compose network. Proxy mode is the supported setup.
+- ✅ **Git worktrees:** done in PRs #8 and #9. See plan-v1.md, "Git worktrees", decisions 26–30.
+  - Each worktree's env file is pointed at its own port automatically (`SetEnvPort`).
+  - Removed worktrees free their port, and their database stops counting as in use.
+  - Env mode in a worktree only warns, because a containerized app resolves `db` to its own compose network. Proxy mode is the supported setup for worktrees.
 - **TLS** (not started, low priority for local dev): the proxy answers "no" to SSL requests, so `sslmode=require` clients fail. Supporting it means terminating TLS in the proxy with a local certificate (e.g. `rustls` with a self-signed cert) and opening TLS upstream when the server needs it.
 
 ## Open question for the owner

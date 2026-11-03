@@ -35,6 +35,12 @@ pub struct World {
     /// Proxy mode: whether the proxy is accepting connections. `None` in env mode.
     #[serde(default)]
     pub proxy_running: Option<bool>,
+    /// This checkout is a linked git worktree.
+    #[serde(default)]
+    pub linked_worktree: bool,
+    /// Proxy mode in a linked worktree with `routing.file` set: its env file's port.
+    #[serde(default)]
+    pub worktree_env: Option<WorktreeEnv>,
     /// Databases other git worktrees of this repo are using: db name → worktree root.
     #[serde(default)]
     pub elsewhere: BTreeMap<String, String>,
@@ -48,6 +54,17 @@ pub struct World {
     /// Why reading the version tables failed, if it did.
     #[serde(default)]
     pub reader_error: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct WorktreeEnv {
+    /// This worktree's proxy port.
+    pub port: u16,
+    pub env_exists: bool,
+    /// The port in the env file's URL now (`None`: no variable, or no port).
+    pub env_port: Option<u16>,
+    /// The main worktree's env file, copied when this worktree has none.
+    pub main_env: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
@@ -405,6 +422,7 @@ impl<'a> Planner<'a> {
         let target = self.target_files(git_branch)?;
         let mut plan = Plan::new(PlanKind::Switch, String::new());
         plan.warnings = self.reconcile();
+        self.push_worktree_env(&mut plan);
 
         match self.branch_for_git(git_branch) {
             Some(b) if self.live(&b.db_name) => {
@@ -676,6 +694,56 @@ impl<'a> Planner<'a> {
             Pause::Held(db) => plan.push(Step::ReleaseConnections { db }),
             Pause::Stopped(services) => plan.push(Step::StartServices { services }),
             Pause::Nothing => {}
+        }
+    }
+
+    /// Git worktrees: point this worktree's app at its own proxy port, or (env
+    /// mode) say that the app has to reach the shared database itself.
+    fn push_worktree_env(&self, plan: &mut Plan) {
+        let r = &self.cfg.routing;
+        if !r.is_proxy() {
+            if self.world.linked_worktree {
+                plan.warnings.push(
+                    "this is a git worktree: in env mode its app must reach the main worktree's database \
+                     itself (a container's `db` host is this worktree's own); proxy mode handles worktrees"
+                        .to_string(),
+                );
+            }
+            return;
+        }
+        let Some(w) = &self.world.worktree_env else {
+            return;
+        };
+        if w.env_port == Some(w.port) {
+            return;
+        }
+        if w.env_exists && w.env_port.is_none() {
+            plan.warnings.push(format!(
+                "{} in {} has no port; point it at this worktree's proxy port {}",
+                r.variable, r.file, w.port
+            ));
+            return;
+        }
+        if !w.env_exists && w.main_env.is_none() {
+            plan.warnings.push(format!(
+                "{} doesn't exist in this worktree; create it with {} pointing at port {}",
+                r.file, r.variable, w.port
+            ));
+            return;
+        }
+        plan.push(Step::SetEnvPort {
+            file: r.file.clone(),
+            variable: r.variable.clone(),
+            port: w.port,
+            copy_from: if w.env_exists {
+                None
+            } else {
+                w.main_env.clone()
+            },
+        });
+        let running = self.running_app_services();
+        if !running.is_empty() {
+            plan.push(Step::StartServices { services: running });
         }
     }
 
@@ -1301,6 +1369,8 @@ mod tests {
             env_file_tracked: false,
             disk: None,
             proxy_running: None,
+            linked_worktree: false,
+            worktree_env: None,
             elsewhere: BTreeMap::new(),
             readings: BTreeMap::new(),
             version_table: None,
@@ -1322,6 +1392,7 @@ mod tests {
                 Step::RewriteEnv { .. } => "env",
                 Step::SetProxyTarget { .. } => "proxy",
                 Step::HoldConnections { .. } => "hold",
+                Step::SetEnvPort { .. } => "env_port",
                 Step::ReleaseConnections { .. } => "release",
                 Step::StartServices { .. } => "start",
                 Step::RunMigrations { .. } => "migrate",
@@ -1475,6 +1546,43 @@ mod tests {
         assert_eq!(k[0], "hold", "{k:?}");
         assert!(k.contains(&"release") && !k.contains(&"stop"), "{k:?}");
         assert!(plan.notes.iter().any(|n| n.contains("worktree at /r")));
+    }
+
+    #[test]
+    fn worktree_app_is_pointed_at_its_own_proxy_port() {
+        let (_d, repo) = repo();
+        commit_file(&repo, "migrations/001.sql", "1");
+        let mut w = world(
+            vec![branch(1, "main", "main_db", &["001.sql"], 1)],
+            "main_db",
+        );
+        w.linked_worktree = true;
+        w.proxy_running = Some(true);
+        w.worktree_env = Some(WorktreeEnv {
+            port: 54321,
+            env_exists: false,
+            env_port: None,
+            main_env: Some("/r/.env".into()),
+        });
+        let c = proxy_cfg();
+        let plan = Planner::new(&c, &repo, &w).switch("main").unwrap();
+        assert_eq!(
+            kinds(&plan)[..2],
+            ["env_port", "start"],
+            "{:?}",
+            kinds(&plan)
+        );
+        assert!(plan.steps[0].describe().contains("Copy .env from /r/.env"));
+
+        // Already on the right port: nothing to do.
+        w.worktree_env.as_mut().unwrap().env_exists = true;
+        w.worktree_env.as_mut().unwrap().env_port = Some(54321);
+        let plan = Planner::new(&c, &repo, &w).switch("main").unwrap();
+        assert!(!kinds(&plan).contains(&"env_port"));
+
+        // Env mode in a worktree only warns.
+        let plan = Planner::new(&cfg(), &repo, &w).switch("main").unwrap();
+        assert!(plan.warnings.iter().any(|x| x.contains("git worktree")));
     }
 
     #[test]

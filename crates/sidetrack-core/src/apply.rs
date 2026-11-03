@@ -311,6 +311,28 @@ impl Applier<'_> {
                 std::fs::write(&path, updated)?;
                 (Undo::RestoreEnv { path, content }, None)
             }
+            Step::SetEnvPort {
+                file,
+                variable,
+                port,
+                copy_from,
+            } => {
+                let path = self.root.join(file);
+                let before = std::fs::read_to_string(&path).ok();
+                let content = match (&before, copy_from) {
+                    (Some(c), _) => c.clone(),
+                    (None, Some(from)) => {
+                        std::fs::read_to_string(from).with_context(|| format!("reading {from}"))?
+                    }
+                    (None, None) => bail!("{file} doesn't exist in this worktree"),
+                };
+                std::fs::write(&path, envfile::set_port(&content, variable, *port)?)?;
+                let undo = match before {
+                    Some(content) => Undo::RestoreEnv { path, content },
+                    None => Undo::RemoveFile(path),
+                };
+                (undo, None)
+            }
             Step::HoldConnections { db } => {
                 let path = self.proxy_hold.clone();
                 crate::proxy::write_hold(&path, db, std::time::Duration::from_secs(600))?;

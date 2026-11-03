@@ -147,6 +147,15 @@ Decisions:
 27. **Worktree ports are allocated once and saved**, rather than derived from the worktree's position in `git worktree list`. Positions shift when a worktree is removed, and the app's URL would then point at the wrong proxy.
 28. **Env mode works in worktrees too, but proxy mode is the intended setup.** A containerized app in a worktree reaches the database by host (`host.docker.internal:<port>`). With env mode, `db` would resolve to the worktree's own compose network.
 
+29. **Worktrees point their app at their own port (`SetEnvPort`).**
+    - In proxy mode, `routing.file` / `routing.variable` are optional, and `init --proxy` keeps them.
+    - In a linked worktree, `switch` sets the port of that URL to the worktree's proxy port. If the worktree has no env file, it copies the main worktree's first.
+    - Running app services are recreated to pick up the change.
+    - The step comes first in the plan, so migrations run through `docker compose exec` already see the right port.
+    - Undo restores the file, or removes the copy.
+    - A tracked env file is never touched.
+30. **Removed worktrees need no cleanup.** Their state files (port, target, pid, log) live in their own git dir, which `git worktree remove` deletes. `active_elsewhere` skips worktrees that can't be opened. Their DB branches follow the git branch, as everywhere else.
+
 `tests/e2e/proxy.sh` adds a worktree: own DB branch, own port (54330), main untouched, delete refused.
 
 ## Test strategy

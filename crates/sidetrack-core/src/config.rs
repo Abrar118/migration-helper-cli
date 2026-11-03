@@ -53,10 +53,11 @@ pub struct RoutingConfig {
     /// "env": rewrite the DB name in an env file and recreate the app.
     /// "proxy": the app connects through `sidetrack proxy`, which sends it to the active DB branch.
     pub mode: String,
-    /// Env mode: the env file the app reads, relative to the repo root.
+    /// The env file the app reads, relative to the repo root. Env mode rewrites
+    /// the DB name in it; proxy mode (optional) sets each git worktree's proxy port.
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub file: String,
-    /// Env mode: variable that holds the database name (a URL or a bare name).
+    /// Variable that holds the database URL (env mode: or a bare name).
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub variable: String,
     /// App services. Env mode recreates them after a switch; both modes stop them
@@ -95,12 +96,10 @@ impl RoutingConfig {
     }
 
     /// Switch to proxy mode, with the app connecting to `app_db`. The env file
-    /// settings are dropped: in proxy mode the app's URL never changes.
+    /// settings stay: git worktrees use them to point the app at their own port.
     pub fn use_proxy(&mut self, app_db: &str) {
         self.mode = "proxy".into();
         self.database = Some(app_db.to_string());
-        self.file.clear();
-        self.variable.clear();
     }
 }
 
@@ -283,8 +282,8 @@ mod tests {
         let text = cfg.to_toml().unwrap();
         assert!(text.contains("mode = \"proxy\""), "{text}");
         assert!(
-            !text.contains("variable"),
-            "env settings are dropped:\n{text}"
+            text.contains("variable"),
+            "env settings stay for worktrees:\n{text}"
         );
     }
 
