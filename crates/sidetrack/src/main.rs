@@ -1,1 +1,536 @@
-fn main() {}
+//! `sidetrack` — give every git branch its own local database.
+
+mod hook;
+mod ui;
+
+use std::path::{Path, PathBuf};
+use std::process::ExitCode;
+
+use anyhow::{bail, Context, Result};
+use clap::{Parser, Subcommand};
+use serde_json::json;
+use sidetrack_core::compose::{docker_available, Compose, ConfigView};
+use sidetrack_core::config::Config;
+use sidetrack_core::detect::{detect, ComposeViews};
+use sidetrack_core::engine::postgres::format_bytes;
+use sidetrack_core::git::Git;
+use sidetrack_core::migrations;
+use sidetrack_core::naming;
+use sidetrack_core::planner::ResetTo;
+use sidetrack_core::registry::{self, NewBranch, Registry};
+use sidetrack_core::workspace::{compose_for, Workspace};
+
+use crate::ui::{ago, confirm, run_plan, Opts};
+
+#[derive(Parser)]
+#[command(name = "sidetrack", version, about = "Give every git branch its own local database.")]
+struct Cli {
+    /// Run as if started in this directory.
+    #[arg(short = 'C', global = true, value_name = "DIR")]
+    dir: Option<PathBuf>,
+    /// Machine-readable output.
+    #[arg(long, global = true)]
+    json: bool,
+    /// Apply without asking.
+    #[arg(long, short = 'y', global = true)]
+    yes: bool,
+    /// Show the plan and stop.
+    #[arg(long, global = true)]
+    dry_run: bool,
+    /// Also show registry bookkeeping steps.
+    #[arg(long, short = 'v', global = true)]
+    verbose: bool,
+    #[command(subcommand)]
+    command: Command,
+}
+
+#[derive(Subcommand)]
+enum Command {
+    /// Detect your setup, write sidetrack.toml and link the current branch to the current database.
+    Init {
+        /// Branch that features merge into (used by `gc`). Detected if omitted.
+        #[arg(long)]
+        main_branch: Option<String>,
+        /// Don't offer to install the git hook.
+        #[arg(long)]
+        no_hook: bool,
+    },
+    /// Show the current branch, the active database and whether they match.
+    Status,
+    /// List DB branches and snapshots.
+    List,
+    /// Switch the database to the one for BRANCH (default: the checked-out branch).
+    Switch { branch: Option<String> },
+    /// Create a DB branch without switching to it.
+    Create {
+        branch: String,
+        /// Copy this DB branch, git branch or snapshot instead of picking automatically.
+        #[arg(long, conflicts_with = "empty")]
+        from: Option<String>,
+        /// Start from an empty database.
+        #[arg(long)]
+        empty: bool,
+    },
+    /// Snapshot the active database (or list / remove snapshots).
+    #[command(args_conflicts_with_subcommands = true)]
+    Snapshot {
+        #[command(subcommand)]
+        action: Option<SnapshotAction>,
+        /// Optional label for the new snapshot.
+        label: Option<String>,
+    },
+    /// Replace the active database with a fresh copy of a snapshot or its parent.
+    Reset {
+        /// Snapshot name or label.
+        #[arg(long, conflicts_with = "parent")]
+        to: Option<String>,
+        /// Copy the parent DB branch instead.
+        #[arg(long)]
+        parent: bool,
+    },
+    /// Drop a DB branch and its snapshots.
+    Delete { branch: String },
+    /// Offer to delete DB branches whose git branch is deleted or merged.
+    Gc,
+    /// Manage the git post-checkout hook.
+    Hook {
+        #[command(subcommand)]
+        action: HookAction,
+    },
+    /// Check that everything sidetrack needs is in place.
+    Doctor,
+}
+
+#[derive(Subcommand)]
+enum SnapshotAction {
+    /// List snapshots.
+    List,
+    /// Delete a snapshot.
+    Rm { name: String },
+}
+
+#[derive(Subcommand)]
+enum HookAction {
+    Install,
+    Uninstall,
+    /// Called by git; not for direct use.
+    #[command(hide = true)]
+    Run { old: String, new: String, flag: String },
+}
+
+fn main() -> ExitCode {
+    let cli = Cli::parse();
+    let dir = cli.dir.clone().unwrap_or_else(|| PathBuf::from("."));
+    let opts = Opts { json: cli.json, yes: cli.yes, dry_run: cli.dry_run, verbose: cli.verbose };
+
+    if let Command::Hook { action: HookAction::Run { old, new, flag } } = &cli.command {
+        hook::run(&dir, old, new, flag);
+        return ExitCode::SUCCESS; // never fail a checkout
+    }
+    match dispatch(cli.command, &dir, &opts) {
+        Ok(true) => ExitCode::SUCCESS,
+        Ok(false) => ExitCode::FAILURE,
+        Err(e) => {
+            if opts.json {
+                println!("{}", json!({ "error": format!("{e:#}") }));
+            } else {
+                eprintln!("error: {e:#}");
+            }
+            ExitCode::FAILURE
+        }
+    }
+}
+
+fn dispatch(command: Command, dir: &Path, opts: &Opts) -> Result<bool> {
+    match command {
+        Command::Init { main_branch, no_hook } => init(dir, opts, main_branch, no_hook),
+        Command::Status => status(dir, opts),
+        Command::List => list(dir, opts),
+        Command::Doctor => doctor(dir, opts),
+        Command::Hook { action } => {
+            let git = Git::discover(dir)?;
+            let msg = match action {
+                HookAction::Install => hook::install(&git)?,
+                HookAction::Uninstall => hook::uninstall(&git)?,
+                HookAction::Run { .. } => unreachable!("handled in main"),
+            };
+            println!("Hook {msg}.");
+            Ok(true)
+        }
+        Command::Snapshot { action: Some(SnapshotAction::List), .. } => snapshot_list(dir, opts),
+        command => plan_command(command, dir, opts),
+    }
+}
+
+/// Commands that build a plan and apply it.
+fn plan_command(command: Command, dir: &Path, opts: &Opts) -> Result<bool> {
+    let ws = Workspace::open(dir)?;
+    let world = ws.world()?;
+    let planner = ws.planner(&world);
+    let plan = match command {
+        Command::Switch { branch } => {
+            let current = ws.git.current_branch()?;
+            let branch = match (branch, &current) {
+                (Some(b), _) => b,
+                (None, Some(c)) => c.clone(),
+                (None, None) => bail!("HEAD is detached; name the branch: `sidetrack switch <branch>`"),
+            };
+            let mut plan = planner.switch(&branch)?;
+            if current.as_deref() != Some(branch.as_str()) {
+                plan.warnings.push(format!(
+                    "you have {} checked out, so the code won't match {branch}'s database",
+                    current.as_deref().unwrap_or("a detached HEAD")
+                ));
+            }
+            plan
+        }
+        Command::Create { branch, from, empty } => planner.create(&branch, from.as_deref(), empty)?,
+        Command::Snapshot { action: Some(SnapshotAction::Rm { name }), .. } => planner.snapshot_remove(&name)?,
+        Command::Snapshot { label, .. } => {
+            let active = world.active_db.as_deref().context("can't read the active database")?;
+            let branch = planner
+                .branch_for_db(active)
+                .with_context(|| format!("{active} isn't linked to a git branch"))?;
+            let seq = ws.reg.next_snapshot_seq(branch.id)?;
+            planner.snapshot(label.as_deref(), seq)?
+        }
+        Command::Reset { to, parent } => {
+            let target = match (to, parent) {
+                (Some(n), _) => ResetTo::Snapshot(n),
+                (None, true) => ResetTo::Parent,
+                (None, false) => ResetTo::Latest,
+            };
+            planner.reset(&target)?
+        }
+        Command::Delete { branch } => planner.delete(&branch)?,
+        Command::Gc => planner.gc()?,
+        _ => unreachable!("not a plan command"),
+    };
+    run_plan(&ws, &world.project, &plan, opts)
+}
+
+// ------------------------------------------------------------------------ init
+
+fn init(dir: &Path, opts: &Opts, main_branch: Option<String>, no_hook: bool) -> Result<bool> {
+    let git = Git::discover(dir)?;
+    let root = git.root().to_path_buf();
+    anyhow::ensure!(docker_available(), "Docker isn't reachable; start Docker and try again");
+
+    let main_branch = match main_branch {
+        Some(b) => Some(b),
+        None => ["main", "master"].into_iter().find(|b| git.branch_exists(b).unwrap_or(false)).map(String::from),
+    };
+
+    let (cfg, compose_project) = if Config::exists(&root) {
+        let cfg = Config::load(&root)?;
+        println!("Using the existing {}.", sidetrack_core::config::CONFIG_FILE);
+        let name = compose_for(&cfg, &root).config(ConfigView::Resolved)?.name;
+        (cfg, name)
+    } else {
+        let compose = Compose::new(&root, vec![]);
+        let views = ComposeViews {
+            resolved: compose.config(ConfigView::Resolved).context("reading the compose config")?,
+            env_files: compose.config(ConfigView::EnvFiles)?,
+            raw: compose.config(ConfigView::Raw)?,
+        };
+        let mut found = detect(&root, &root, &views)?;
+        if found.user.is_none() {
+            if let Some(file) = found.user_file.clone() {
+                if let Ok(u) = compose.exec(&found.db_service, &["cat", &file]) {
+                    found.user = Some(u.trim().to_string());
+                }
+            }
+        }
+        if opts.json {
+            println!("{}", json!({ "detected": found }));
+        } else {
+            println!("Detected:\n{}", found.render());
+        }
+        let cfg = found.to_config(main_branch.clone()).context(
+            "detection is incomplete; write sidetrack.toml by hand (see README) and run `sidetrack init` again",
+        )?;
+        if opts.dry_run {
+            println!("{}", cfg.to_toml()?);
+            return Ok(true);
+        }
+        if !confirm(&format!("Write {} with these settings?", sidetrack_core::config::CONFIG_FILE), opts)? {
+            println!("Nothing changed.");
+            return Ok(true);
+        }
+        cfg.save(&root)?;
+        println!("Wrote {}. It holds no secrets and is safe to commit.", sidetrack_core::config::CONFIG_FILE);
+        (cfg, views.resolved.name)
+    };
+
+    let ws = Workspace::from_parts(git, cfg, Registry::open(&registry::default_path()?)?);
+    anyhow::ensure!(
+        ws.compose.running_services()?.contains(&ws.cfg.database.service),
+        "start the database first: `docker compose up -d {}`",
+        ws.cfg.database.service
+    );
+    let project = ws.reg.upsert_project(&ws.root_key(), &compose_project, &ws.cfg.database.engine, &ws.cfg.database.service)?;
+
+    // Adopt the current database for the current branch.
+    let active = ws
+        .active_db()?
+        .with_context(|| format!("can't read a database name from {} in {}", ws.cfg.routing.variable, ws.cfg.routing.file))?;
+    anyhow::ensure!(ws.pg.exists(&active)?, "{active} (from {}) doesn't exist on the server", ws.cfg.routing.file);
+    let branch = ws.git.current_branch()?.context("check out a branch before running init")?;
+    let dirs = &ws.cfg.migrations.dirs;
+    match (ws.reg.branch_by_db(project.id, &active)?, ws.reg.branch_by_git(project.id, &branch)?) {
+        (None, None) => {
+            ws.reg.insert_branch(
+                project.id,
+                &NewBranch {
+                    git_branch: branch.clone(),
+                    db_name: active.clone(),
+                    parent_id: None,
+                    base_commit: ws.git.resolve("HEAD")?,
+                    migration_files: migrations::current_files(&ws.git, dirs)?,
+                    adopted: true,
+                },
+            )?;
+            println!("Linked {branch} → {active} (assuming it has every migration in this checkout).");
+        }
+        (Some(b), _) => println!("{active} is already linked to {}.", b.git_branch),
+        (None, Some(b)) => println!("{branch} is already linked to {}.", b.db_name),
+    }
+
+    // Re-link databases sidetrack created earlier (e.g. after the registry was deleted).
+    for b in ws.git.local_branches()? {
+        if ws.reg.branch_by_git(project.id, &b)?.is_some() {
+            continue;
+        }
+        for name in [naming::db_name_for_branch(&b), naming::hashed_db_name(&b)] {
+            if ws.reg.branch_by_db(project.id, &name)?.is_none() && ws.pg.exists(&name)? {
+                ws.reg.insert_branch(
+                    project.id,
+                    &NewBranch {
+                        git_branch: b.clone(),
+                        db_name: name.clone(),
+                        parent_id: None,
+                        base_commit: ws.git.resolve(&b)?,
+                        migration_files: migrations::files_at(&ws.git, &b, dirs)?,
+                        adopted: false,
+                    },
+                )?;
+                println!("Re-linked {b} → {name}.");
+                break;
+            }
+        }
+    }
+
+    if ws.git.is_tracked(&ws.cfg.routing.file)? {
+        println!(
+            "! {} is tracked by git. sidetrack won't rewrite it; move {} into an untracked file first.",
+            ws.cfg.routing.file, ws.cfg.routing.variable
+        );
+    }
+    if !no_hook && !hook::is_installed(&ws.git)
+        && confirm("Install the git hook, so switching branches offers to switch the database?", opts)? {
+            println!("Hook {}.", hook::install(&ws.git)?);
+        }
+    println!("Ready. Try `sidetrack status`.");
+    Ok(true)
+}
+
+// ---------------------------------------------------------------------- status
+
+fn status(dir: &Path, opts: &Opts) -> Result<bool> {
+    let ws = Workspace::open(dir)?;
+    let branch = ws.git.current_branch()?;
+    let active = ws.active_db()?;
+    let world = match ws.world() {
+        Ok(w) => w,
+        Err(e) => {
+            if opts.json {
+                println!("{}", json!({ "git_branch": branch, "active_db": active, "error": format!("{e:#}") }));
+            } else {
+                println!("Git branch:  {}", branch.as_deref().unwrap_or("(detached)"));
+                println!("Database:    {}", active.as_deref().unwrap_or("?"));
+                println!("! {e:#}");
+            }
+            return Ok(false);
+        }
+    };
+    let planner = ws.planner(&world);
+    let linked = active.as_deref().and_then(|a| planner.branch_for_db(a)).map(|b| b.git_branch.clone());
+    let expected = branch.as_deref().and_then(|b| planner.branch_for_git(b)).map(|b| b.db_name.clone());
+    let plan = match &branch {
+        Some(b) => Some(planner.switch(b)?),
+        None => None,
+    };
+    let in_sync = plan.as_ref().is_some_and(|p| p.is_noop());
+
+    if opts.json {
+        println!(
+            "{}",
+            json!({
+                "git_branch": branch, "active_db": active, "linked_branch": linked,
+                "expected_db": expected, "in_sync": in_sync, "warnings": planner.reconcile(), "plan": plan,
+            })
+        );
+        return Ok(true);
+    }
+    println!("Git branch:  {}", branch.as_deref().unwrap_or("(detached)"));
+    println!(
+        "Database:    {}{}",
+        active.as_deref().unwrap_or("?"),
+        linked.map(|l| format!("  (DB branch of {l})")).unwrap_or_default()
+    );
+    if let Some(b) = &branch {
+        println!(
+            "Expected:    {}",
+            expected.unwrap_or_else(|| format!("{} (not created yet)", naming::db_name_for_branch(b)))
+        );
+    }
+    match &plan {
+        Some(p) if p.is_noop() => {
+            println!("State:       ✓ in sync");
+            for w in &p.warnings {
+                println!("  ! {w}");
+            }
+        }
+        Some(p) => {
+            println!("State:       ✗ out of sync — `sidetrack switch` would:\n");
+            print!("{}", p.render(opts.verbose));
+        }
+        None => println!("State:       detached HEAD; nothing to compare"),
+    }
+    Ok(true)
+}
+
+// ------------------------------------------------------------------------ list
+
+fn list(dir: &Path, opts: &Opts) -> Result<bool> {
+    let ws = Workspace::open(dir)?;
+    let world = ws.world()?;
+    if opts.json {
+        println!(
+            "{}",
+            json!({ "active_db": world.active_db, "branches": world.branches, "snapshots": world.snapshots, "server_dbs": world.server_dbs })
+        );
+        return Ok(true);
+    }
+    if world.branches.is_empty() {
+        println!("No DB branches yet. Run `sidetrack init`.");
+        return Ok(true);
+    }
+    let width = world.branches.iter().map(|b| b.git_branch.len()).max().unwrap_or(10).max(10);
+    let dbw = world.branches.iter().map(|b| b.db_name.len()).max().unwrap_or(8).max(8);
+    println!("  {:width$}  {:dbw$}  {:>9}  {:>10}  LAST USED", "BRANCH", "DATABASE", "SIZE", "MIGRATIONS");
+    for b in &world.branches {
+        let mark = if world.active_db.as_deref() == Some(b.db_name.as_str()) { "*" } else { " " };
+        let size = world.server_dbs.get(&b.db_name).map(|d| format_bytes(d.size_bytes)).unwrap_or_else(|| "missing".into());
+        println!(
+            "{mark} {:width$}  {:dbw$}  {size:>9}  {:>10}  {}",
+            b.git_branch,
+            b.db_name,
+            b.migration_files.len(),
+            ago(b.last_used_at)
+        );
+        for s in world.snapshots.iter().filter(|s| s.branch_id == b.id) {
+            let size = world.server_dbs.get(&s.db_name).map(|d| format_bytes(d.size_bytes)).unwrap_or_else(|| "missing".into());
+            let label = s.label.as_deref().map(|l| format!(" \"{l}\"")).unwrap_or_default();
+            println!("    ↳ snapshot {}{label}  {size}  {}", s.db_name, ago(s.created_at));
+        }
+    }
+    Ok(true)
+}
+
+fn snapshot_list(dir: &Path, opts: &Opts) -> Result<bool> {
+    let ws = Workspace::open(dir)?;
+    let project = ws.project()?;
+    let snaps = ws.reg.snapshots(project.id)?;
+    if opts.json {
+        println!("{}", json!({ "snapshots": snaps }));
+    } else if snaps.is_empty() {
+        println!("No snapshots. Create one with `sidetrack snapshot [label]`.");
+    } else {
+        for s in snaps {
+            let label = s.label.as_deref().map(|l| format!(" \"{l}\"")).unwrap_or_default();
+            println!("{}{label}  {} migrations  {}", s.db_name, s.migration_files.len(), ago(s.created_at));
+        }
+    }
+    Ok(true)
+}
+
+// ---------------------------------------------------------------------- doctor
+
+fn doctor(dir: &Path, opts: &Opts) -> Result<bool> {
+    let mut checks: Vec<(String, bool, String)> = vec![];
+    let mut check = |name: &str, ok: bool, detail: String| checks.push((name.to_string(), ok, detail));
+
+    let git = match Git::discover(dir) {
+        Ok(g) => {
+            check("git repository", true, g.root().display().to_string());
+            g
+        }
+        Err(e) => {
+            check("git repository", false, format!("{e:#}"));
+            return finish_doctor(checks, opts);
+        }
+    };
+    let cfg = match Config::load(git.root()) {
+        Ok(c) => {
+            check("sidetrack.toml", true, "valid".into());
+            c
+        }
+        Err(e) => {
+            check("sidetrack.toml", false, format!("{e:#}"));
+            return finish_doctor(checks, opts);
+        }
+    };
+    let reg_path = registry::default_path()?;
+    let ws = Workspace::from_parts(git, cfg, Registry::open(&reg_path)?);
+    check("registry", ws.project().is_ok(), format!("{} ({})", reg_path.display(), if ws.project().is_ok() { "repo registered" } else { "run `sidetrack init`" }));
+    check("git hook", hook::is_installed(&ws.git), if hook::is_installed(&ws.git) { "installed".into() } else { "not installed (`sidetrack hook install`)".into() });
+
+    match ws.active_db() {
+        Ok(Some(db)) => check("env file", true, format!("{} in {} → {db}", ws.cfg.routing.variable, ws.cfg.routing.file)),
+        Ok(None) => check("env file", false, format!("no database name in {} in {}", ws.cfg.routing.variable, ws.cfg.routing.file)),
+        Err(e) => check("env file", false, format!("{e:#}")),
+    }
+    let tracked = ws.git.is_tracked(&ws.cfg.routing.file).unwrap_or(false);
+    check("env file untracked", !tracked, if tracked { "tracked by git; sidetrack won't rewrite it".into() } else { "ok".into() });
+    let missing: Vec<&String> = ws.cfg.migrations.dirs.iter().filter(|d| !ws.root.join(d).is_dir()).collect();
+    check("migration dirs", missing.is_empty(), if missing.is_empty() { ws.cfg.migrations.dirs.join(", ") } else { format!("missing: {missing:?}") });
+
+    if !docker_available() {
+        check("docker", false, "not reachable".into());
+        return finish_doctor(checks, opts);
+    }
+    check("docker", true, "reachable".into());
+    let running = ws.compose.running_services().unwrap_or_default();
+    let db_up = running.contains(&ws.cfg.database.service);
+    check("database service", db_up, if db_up { format!("{} running", ws.cfg.database.service) } else { format!("{} not running", ws.cfg.database.service) });
+    if db_up {
+        match ws.pg.server_version_num() {
+            Ok(v) => {
+                let how = match v {
+                    v if v >= 180000 => "Postgres 18: clone copies (copy-on-write on btrfs/XFS/APFS)",
+                    v if v >= 150000 => "file copies (STRATEGY FILE_COPY)",
+                    _ => "template copies (upgrade to 15+ for faster copies)",
+                };
+                check("postgres", true, format!("version {}.{} — {how}", v / 10000, v % 10000));
+            }
+            Err(e) => check("postgres", false, format!("{e:#}")),
+        }
+    }
+    let app_down: Vec<&String> = ws.cfg.routing.restart.iter().filter(|s| !running.contains(s)).collect();
+    check("app services", app_down.is_empty(), if app_down.is_empty() { ws.cfg.routing.restart.join(", ") } else { format!("not running: {app_down:?}") });
+    finish_doctor(checks, opts)
+}
+
+fn finish_doctor(checks: Vec<(String, bool, String)>, opts: &Opts) -> Result<bool> {
+    let ok = checks.iter().all(|(_, ok, _)| *ok);
+    if opts.json {
+        let list: Vec<_> = checks.iter().map(|(n, ok, d)| json!({ "check": n, "ok": ok, "detail": d })).collect();
+        println!("{}", json!({ "ok": ok, "checks": list }));
+    } else {
+        for (name, ok, detail) in &checks {
+            println!("{} {name:<20} {detail}", if *ok { "✓" } else { "✗" });
+        }
+    }
+    Ok(ok)
+}

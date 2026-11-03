@@ -47,7 +47,8 @@ pub struct Planner<'a> {
 /// The source a new database is copied from.
 struct Base {
     db_name: String,
-    files: FileSet,
+    /// Migrations known to be applied in the base (see `Candidate::applied`).
+    applied: FileSet,
     /// Registry branch to record as parent.
     parent_db: Option<String>,
     why: String,
@@ -166,6 +167,7 @@ impl<'a> Planner<'a> {
                 kind: CandidateKind::Branch,
                 git_branch: b.git_branch.clone(),
                 files,
+                applied: b.migration_files.clone(),
                 recency: b.last_used_at,
             });
         }
@@ -179,6 +181,7 @@ impl<'a> Planner<'a> {
                 kind: CandidateKind::Snapshot,
                 git_branch: owner.map(|b| b.git_branch.clone()).unwrap_or_default(),
                 files: s.migration_files.clone(),
+                applied: s.migration_files.clone(),
                 recency: s.created_at,
             });
         }
@@ -198,12 +201,13 @@ impl<'a> Planner<'a> {
             };
             Base {
                 db_name: c.db_name.clone(),
-                files: c.files.clone(),
+                applied: c.applied.clone(),
                 parent_db,
                 why: format!(
-                    "{} is the closest compatible base ({what}, {} of {} migrations, none unknown to this branch)",
+                    "{} is the closest compatible base ({what}; holds no migration this branch lacks; \
+                     {} of {} migrations known to be applied)",
                     c.db_name,
-                    c.files.len(),
+                    c.applied.len(),
                     target.len()
                 ),
             }
@@ -216,7 +220,7 @@ impl<'a> Planner<'a> {
             anyhow::ensure!(self.live(&b.db_name), "{} doesn't exist on the server", b.db_name);
             return Ok(Base {
                 db_name: b.db_name.clone(),
-                files: b.migration_files.clone(),
+                applied: b.migration_files.clone(),
                 parent_db: Some(b.db_name.clone()),
                 why: format!("copying {} as requested", b.db_name),
             });
@@ -224,7 +228,7 @@ impl<'a> Planner<'a> {
         let s = self.find_snapshot(from)?;
         Ok(Base {
             db_name: s.db_name.clone(),
-            files: s.migration_files.clone(),
+            applied: s.migration_files.clone(),
             parent_db: self.branch_by_id(s.branch_id).map(|b| b.db_name.clone()),
             why: format!("copying snapshot {} as requested", s.db_name),
         })
@@ -378,12 +382,12 @@ impl<'a> Planner<'a> {
                     db_name: name.to_string(),
                     parent_db: base.parent_db.clone(),
                     base_commit,
-                    migration_files: base.files.clone(),
+                    migration_files: base.applied.clone(),
                 });
                 if stop && !switch_to {
                     plan.push(Step::StartServices { services: running.clone() });
                 }
-                base.files.clone()
+                base.applied.clone()
             }
             None => {
                 if !empty {
@@ -619,7 +623,12 @@ impl<'a> Planner<'a> {
                 continue;
             }
             let gone = !self.git.branch_exists(&b.git_branch)?;
-            let is_merged = merged.contains(&b.git_branch) && !b.adopted;
+            // A branch with no commits of its own also counts as "merged" to git, so
+            // only treat it as merged if it moved since its DB branch was created.
+            let moved = || -> Result<bool> {
+                Ok(self.git.resolve(&b.git_branch)?.as_deref() != b.base_commit.as_deref())
+            };
+            let is_merged = merged.contains(&b.git_branch) && !b.adopted && moved()?;
             if !(gone || is_merged || !self.live(&b.db_name)) {
                 continue;
             }
@@ -797,6 +806,28 @@ mod tests {
         }));
     }
 
+    /// Regression (found by the e2e test): main gained a migration in git that its
+    /// local database never ran. A branch from main must still run it.
+    #[test]
+    fn base_behind_its_git_branch_still_migrates() {
+        let (_d, repo) = repo();
+        commit_file(&repo, "migrations/001.sql", "1");
+        commit_file(&repo, "migrations/004.sql", "4");
+        git(&repo, &["checkout", "-q", "-b", "feature/c"]);
+
+        let w = world(vec![branch(1, "main", "app_dev", &["001.sql"], 1)], "app_dev");
+        let c = cfg();
+        let plan = Planner::new(&c, &repo, &w).switch("feature/c").unwrap();
+        assert!(
+            plan.steps.contains(&Step::RunMigrations {
+                command: "./migrate".into(),
+                pending: vec!["migrations/004.sql".into()]
+            }),
+            "{}",
+            plan.render(true)
+        );
+    }
+
     #[test]
     fn no_compatible_base_builds_from_empty_and_seeds() {
         let (_d, repo) = repo();
@@ -863,6 +894,26 @@ mod tests {
         let gc = p.gc().unwrap();
         assert_eq!(kinds(&gc), ["drop", "forget"]);
         assert!(gc.steps.contains(&Step::DropDatabase { name: "deleted_branch_db".into() }));
+    }
+
+    #[test]
+    fn gc_keeps_fresh_branches_that_git_calls_merged() {
+        let (_d, repo) = repo();
+        git(&repo, &["checkout", "-q", "-b", "fresh"]);
+        git(&repo, &["checkout", "-q", "-b", "done"]);
+        let done_start = repo.resolve("HEAD").unwrap();
+        commit_file(&repo, "x.txt", "work");
+        git(&repo, &["checkout", "-q", "main"]);
+        git(&repo, &["merge", "-q", "--ff-only", "done"]);
+
+        let mut fresh = branch(2, "fresh", "fresh_db", &[], 2);
+        fresh.base_commit = repo.resolve("fresh").unwrap();
+        let mut done = branch(3, "done", "done_db", &[], 3);
+        done.base_commit = done_start;
+        let w = world(vec![branch(1, "main", "main_db", &[], 1), fresh, done], "main_db");
+        let c = cfg();
+        let gc = Planner::new(&c, &repo, &w).gc().unwrap();
+        assert_eq!(gc.steps, [Step::DropDatabase { name: "done_db".into() }, Step::ForgetBranch { db_name: "done_db".into() }]);
     }
 
     #[test]

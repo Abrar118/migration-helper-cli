@@ -282,11 +282,10 @@ fn walk(root: &Path, max_depth: usize) -> Vec<PathBuf> {
         for e in entries.flatten() {
             let p = e.path();
             let name = e.file_name().to_string_lossy().into_owned();
-            if p.is_dir() {
-                if depth < max_depth && !SKIP_DIRS.contains(&name.as_str()) {
+            if p.is_dir()
+                && depth < max_depth && !SKIP_DIRS.contains(&name.as_str()) {
                     stack.push((p.clone(), depth + 1));
                 }
-            }
             out.push(p);
         }
     }

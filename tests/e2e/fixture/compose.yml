@@ -1,0 +1,23 @@
+# Fixture for tests/e2e/run.sh: a Postgres service and an "app" container that
+# runs a tiny migration tool (migrate.sh) with the DATABASE_URL from .env.
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: app
+      POSTGRES_PASSWORD: secret
+      POSTGRES_DB: app_dev
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "app", "-d", "app_dev"]
+      interval: 1s
+      retries: 30
+  api:
+    image: postgres:16-alpine
+    command: ["sleep", "infinity"]
+    env_file: [.env]
+    working_dir: /app
+    volumes:
+      - ./:/app
+    depends_on:
+      db:
+        condition: service_healthy

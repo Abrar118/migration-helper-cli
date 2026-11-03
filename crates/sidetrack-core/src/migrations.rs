@@ -67,8 +67,12 @@ pub struct Candidate {
     pub kind: CandidateKind,
     /// The git branch it belongs to.
     pub git_branch: String,
-    /// Migration files it is known (or assumed) to contain.
+    /// Migration files it *may* contain (recorded plus anything its git branch now
+    /// has). Used to decide compatibility: over-counting is the safe direction.
     pub files: FileSet,
+    /// Migration files it is *known* to contain. Used to work out what still has to
+    /// run: under-counting is the safe direction (the tool skips what's applied).
+    pub applied: FileSet,
     /// Tie-breaker: newer wins.
     pub recency: i64,
 }
@@ -117,6 +121,7 @@ mod tests {
             kind: CandidateKind::Branch,
             git_branch: db.trim_end_matches("_db").into(),
             files: set(files),
+            applied: set(files),
             recency,
         }
     }
@@ -165,17 +170,18 @@ mod tests {
 
         let dev_now = files_at(&repo, "dev", &dirs).unwrap();
         let cands = [
-            Candidate { files: dev_now, recency: 10, ..cand("dev_db", &[], 0) },
+            Candidate { files: dev_now.clone(), applied: dev_now, recency: 10, ..cand("dev_db", &[], 0) },
             Candidate {
                 kind: CandidateKind::Snapshot,
                 files: set(&["migrations/001_users.sql"]),
+                applied: set(&["migrations/001_users.sql"]),
                 recency: 1,
                 ..cand("dev_db__s1", &[], 0)
             },
         ];
         let base = select_base(&target, &cands).unwrap();
         assert_eq!(base.db_name, "dev_db__s1");
-        assert_eq!(pending(&target, &base.files), ["migrations/002_c.sql"]);
+        assert_eq!(pending(&target, &base.applied), ["migrations/002_c.sql"]);
     }
 
     #[test]
