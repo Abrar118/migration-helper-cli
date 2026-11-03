@@ -50,15 +50,41 @@ pub struct DatabaseConfig {
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct RoutingConfig {
-    /// Only "env" in v1. "proxy" is planned for v2.
+    /// "env": rewrite the DB name in an env file and recreate the app.
+    /// "proxy": the app connects through `sidetrack proxy`, which sends it to the active DB branch.
     pub mode: String,
-    /// The env file the app reads, relative to the repo root.
+    /// Env mode: the env file the app reads, relative to the repo root.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
     pub file: String,
-    /// Variable that holds the database name (a URL or a bare name).
+    /// Env mode: variable that holds the database name (a URL or a bare name).
+    #[serde(default, skip_serializing_if = "String::is_empty")]
     pub variable: String,
-    /// Compose services to recreate after the env file changes.
+    /// App services. Env mode recreates them after a switch; both modes stop them
+    /// while the database they use is being copied.
     #[serde(default)]
     pub restart: Vec<String>,
+    /// Proxy mode: the database name the app connects to (e.g. "app_dev").
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub database: Option<String>,
+    /// Proxy mode: address the proxy listens on. Default: 127.0.0.1:54320.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub listen: Option<String>,
+    /// Proxy mode: the Postgres server as reached from this machine. Default: the
+    /// port compose publishes for the database service.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub upstream: Option<String>,
+}
+
+pub const DEFAULT_PROXY_LISTEN: &str = "127.0.0.1:54320";
+
+impl RoutingConfig {
+    pub fn is_proxy(&self) -> bool {
+        self.mode == "proxy"
+    }
+
+    pub fn listen_addr(&self) -> &str {
+        self.listen.as_deref().unwrap_or(DEFAULT_PROXY_LISTEN)
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -148,11 +174,17 @@ impl Config {
             "database.engine = {:?} is not supported yet (only \"postgres\")",
             self.database.engine
         );
-        anyhow::ensure!(
-            self.routing.mode == "env",
-            "routing.mode = {:?} is not supported yet (only \"env\")",
-            self.routing.mode
-        );
+        match self.routing.mode.as_str() {
+            "env" => anyhow::ensure!(
+                !self.routing.file.is_empty() && !self.routing.variable.is_empty(),
+                "routing.mode = \"env\" needs routing.file and routing.variable"
+            ),
+            "proxy" => anyhow::ensure!(
+                self.routing.database.as_deref().is_some_and(|d| !d.is_empty()),
+                "routing.mode = \"proxy\" needs routing.database: the database name your app connects to"
+            ),
+            other => anyhow::bail!("routing.mode = {other:?} isn't known (use \"env\" or \"proxy\")"),
+        }
         anyhow::ensure!(
             !self.migrations.dirs.is_empty(),
             "migrations.dirs must not be empty"
@@ -185,6 +217,9 @@ mod tests {
                 file: ".env".into(),
                 variable: "DATABASE_URL".into(),
                 restart: vec!["api".into()],
+                database: None,
+                listen: None,
+                upstream: None,
             },
             migrations: MigrationsConfig {
                 tool: "alembic".into(),
@@ -211,6 +246,18 @@ mod tests {
             "empty sections are omitted:\n{text}"
         );
         assert_eq!(Config::load(dir.path()).unwrap(), cfg);
+    }
+
+    #[test]
+    fn proxy_mode_needs_a_database_name() {
+        let mut cfg = sample();
+        cfg.routing.mode = "proxy".into();
+        assert!(cfg.validate().is_err());
+        cfg.routing.database = Some("app_dev".into());
+        cfg.routing.file.clear();
+        cfg.routing.variable.clear();
+        cfg.validate().unwrap();
+        assert_eq!(cfg.routing.listen_addr(), DEFAULT_PROXY_LISTEN);
     }
 
     #[test]

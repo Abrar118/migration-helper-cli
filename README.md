@@ -17,7 +17,7 @@ Plan:
 Apply? [Y]es / [n]o / [a]lways for this repo
 ```
 
-Status: **v1, Postgres only.** See [`docs/spec-v1.md`](docs/spec-v1.md) for the full spec and [`docs/plan-v1.md`](docs/plan-v1.md) for how it's built.
+Status: **v2, Postgres only.** Routing by env file or by a local proxy. See [`docs/spec-v1.md`](docs/spec-v1.md) for the full spec and [`docs/plan-v1.md`](docs/plan-v1.md) for how it's built.
 
 ## Requirements
 
@@ -75,6 +75,7 @@ sidetrack: Create feature_c_db for feature/c and switch to it (from app_dev) —
 | `sidetrack hook install` / `uninstall` | Manage the `post-checkout` hook |
 | `sidetrack rename <old> <new>` | Follow `git branch -m`: move the DB branch to the new name |
 | `sidetrack bench [--from X]` | Time a copy of a database here (then delete the copy) and estimate copy times for bigger ones |
+| `sidetrack proxy [--listen ADDR]` | Run the local proxy (proxy mode). Stays in the foreground |
 | `sidetrack doctor` | Check Docker, Postgres, disk space, the env file, the hook and more |
 
 Global flags: `--dry-run`, `--json`, `--yes`, `-v` (show registry bookkeeping steps), `-C <dir>`.
@@ -113,12 +114,41 @@ main_branch = "main"      # used by `gc` to find merged branches
 keep = 5                  # optional: `gc` drops older unlabelled snapshots per branch
 ```
 
+### Proxy mode: no restarts
+
+Instead of rewriting an env file and recreating the app, point the app at a local proxy once and leave it:
+
+```toml
+[routing]
+mode = "proxy"
+database = "app_dev"          # the name your app connects to
+listen = "0.0.0.0:54320"      # default 127.0.0.1:54320
+restart = ["api"]             # stopped only while its database is being copied
+# upstream = "127.0.0.1:5432" # default: the port compose publishes for the db service
+```
+
+```yaml
+# compose.yml
+services:
+  db:
+    ports: ["5432:5432"]                                # the proxy reaches Postgres here
+  api:
+    environment:
+      DATABASE_URL: postgresql://app:secret@host.docker.internal:54320/app_dev
+    extra_hosts: ["host.docker.internal:host-gateway"]  # needed on Linux
+```
+
+- **Running it:** start the proxy with `sidetrack proxy` and keep it running. A switch then only changes where `app_dev` goes. The proxy closes the app's open connections to the old database, so its connection pool reconnects to the new one.
+- **Other databases:** connections to any other name pass through unchanged.
+- **Encryption:** the proxy doesn't speak TLS. Use `sslmode=prefer` (the default) or `disable`.
+- **Linux:** when the app runs in a container, listen on `0.0.0.0` (or the Docker bridge address), not `127.0.0.1`.
+
 Detected migration tools: Alembic, Django, Prisma, Rails, Flyway and Knex. Anything else works too: point `dirs` at the migration folder(s) and set `command`.
 
 ## Limitations (v1)
 
 - **Postgres only.** MySQL/MariaDB is next, then SQL Server and Oracle (see the spec's phasing).
-- **Routing by env file.** The app is recreated on each switch. A local proxy that needs no restarts is planned for v2.
+- **Env-file routing recreates the app on each switch.** Proxy mode avoids that, but the proxy has to be running, and copying the active database still stops the app briefly.
 - **Without a version table** (a tool sidetrack doesn't know, and no `version_table` set), migration state comes from file names in git and sidetrack's own records. If you run migrations yourself, those can lag behind. The only effect is that a later `switch` may run your migration command when there's nothing new to apply, which is harmless.
 - **Every DB branch is a full copy** unless you're on Postgres 18 with a copy-on-write filesystem. Use `gc` and `delete` to reclaim space.
 - **One database service per project.**
@@ -130,6 +160,7 @@ cargo test                       # unit tests; Postgres tests skip without a ser
 SIDETRACK_TEST_PG="docker exec -i <container> psql -U postgres" cargo test   # include them
 tests/e2e/run.sh                 # full scenario in Docker (spec §1)
 tests/e2e/alembic.sh             # the same with real Alembic (needs alembic + psycopg on PATH)
+tests/e2e/proxy.sh               # proxy mode
 ```
 
 Layout:

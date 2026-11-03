@@ -9,7 +9,7 @@ use anyhow::{Context, Result};
 use serde::Deserialize;
 use serde_json::Value;
 
-use crate::process::{capture, run};
+use crate::process::{capture, capture_opt, run};
 
 #[derive(Debug, Clone)]
 pub struct Compose {
@@ -86,6 +86,15 @@ impl Compose {
             .map(str::to_string)
             .filter(|l| !l.is_empty())
             .collect())
+    }
+
+    /// The host address a service's container port is published on, if any.
+    pub fn port(&self, service: &str, port: u16) -> Result<Option<String>> {
+        Ok(
+            capture_opt(self.command().args(["port", service, &port.to_string()]))?
+                .map(|s| s.trim().to_string())
+                .filter(|s| !s.is_empty() && !s.ends_with(":0")),
+        )
     }
 
     pub fn stop(&self, services: &[String]) -> Result<()> {

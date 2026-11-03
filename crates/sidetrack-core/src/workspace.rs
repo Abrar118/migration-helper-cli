@@ -65,8 +65,56 @@ impl Workspace {
         self.root.join(&self.cfg.routing.file)
     }
 
-    /// The database the app points at, read from the env file.
+    /// Where `switch` records the proxy's target (inside `.git`, never committed).
+    pub fn proxy_target_path(&self) -> PathBuf {
+        self.git
+            .git_path("sidetrack-proxy-target")
+            .unwrap_or_else(|_| self.root.join(".git/sidetrack-proxy-target"))
+    }
+
+    /// Whether something accepts connections on the proxy's address.
+    pub fn proxy_running(&self) -> bool {
+        let addr = self
+            .cfg
+            .routing
+            .listen_addr()
+            .replace("0.0.0.0", "127.0.0.1");
+        addr.parse::<std::net::SocketAddr>().is_ok_and(|a| {
+            std::net::TcpStream::connect_timeout(&a, std::time::Duration::from_millis(300)).is_ok()
+        })
+    }
+
+    /// Postgres as reached from this machine: `routing.upstream`, else the port
+    /// compose publishes for the database service.
+    pub fn proxy_upstream(&self) -> Result<String> {
+        if let Some(u) = &self.cfg.routing.upstream {
+            return Ok(u.clone());
+        }
+        let port = self
+            .compose
+            .port(&self.cfg.database.service, 5432)?
+            .with_context(|| {
+                format!(
+                    "{} doesn't publish port 5432; add `ports: [\"5432\"]` to it in compose, \
+                 or set routing.upstream in sidetrack.toml",
+                    self.cfg.database.service
+                )
+            })?;
+        Ok(port
+            .replace("0.0.0.0", "127.0.0.1")
+            .replace("[::]", "127.0.0.1"))
+    }
+
+    /// The database the app points at: the proxy's target in proxy mode, else the
+    /// name in the env file.
     pub fn active_db(&self) -> Result<Option<String>> {
+        if self.cfg.routing.is_proxy() {
+            let app_db = self.cfg.routing.database.clone().unwrap_or_default();
+            return Ok(Some(crate::proxy::read_target(
+                &self.proxy_target_path(),
+                &app_db,
+            )));
+        }
         let path = self.env_path();
         let content = match std::fs::read_to_string(&path) {
             Ok(c) => c,
@@ -109,7 +157,9 @@ impl Workspace {
             snapshots: self.reg.snapshots(project.id)?,
             connections: self.pg.connections_by_db()?,
             active_db: self.active_db()?,
-            env_file_tracked: self.git.is_tracked(&self.cfg.routing.file)?,
+            env_file_tracked: !self.cfg.routing.is_proxy()
+                && self.git.is_tracked(&self.cfg.routing.file)?,
+            proxy_running: self.cfg.routing.is_proxy().then(|| self.proxy_running()),
             disk: self.disk_space(),
             readings,
             version_table,
@@ -256,6 +306,7 @@ impl Workspace {
             pg: &self.pg,
             reg: &self.reg,
             project,
+            proxy_target: self.proxy_target_path(),
         }
     }
 }

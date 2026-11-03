@@ -4,7 +4,9 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What this is
 
-`sidetrack` is a Rust CLI that gives every git branch its own local Postgres database, running in Docker Compose. Switching git branches switches which database the app uses (by rewriting the DB name in an untracked env file and recreating the app containers), so migration tools never see another branch's migrations. Nothing is rolled back; there are no down migrations.
+`sidetrack` is a Rust CLI that gives every git branch its own local Postgres database, running in Docker Compose. Switching git branches switches which database the app uses, so migration tools never see another branch's migrations. There are two routing modes:
+- `env`: rewrite the DB name in an untracked env file and recreate the app containers.
+- `proxy`: the app connects through `sidetrack proxy`, which sends it to the active DB branch. Nothing is rolled back; there are no down migrations.
 
 - `docs/spec-v1.md` is the product spec. Requirement IDs like `P0.6` are referenced from code comments.
 - `docs/plan-v1.md` is the build plan, plus a "Decisions" list. Read it before changing behaviour: several rules there exist because of bugs.
@@ -26,6 +28,7 @@ SIDETRACK_TEST_PG="docker exec -i st-pg psql -U postgres" cargo test
 # Full scenario in Docker (builds the binary, makes a temp repo from tests/e2e/fixture):
 tests/e2e/run.sh
 tests/e2e/alembic.sh   # real Alembic; needs `pip install alembic "psycopg[binary]"`
+tests/e2e/proxy.sh     # routing.mode = "proxy" with `sidetrack proxy` running
 
 # Running the CLI by hand against some project:
 SIDETRACK_REGISTRY=/tmp/st.sqlite cargo run -p sidetrack -- -C /path/to/project status
@@ -51,7 +54,7 @@ Every command follows the same pipeline:
 
 ### Where the truth lives
 
-- **Active database:** whatever the env file's variable currently points at (`Workspace::active_db`), not the registry.
+- **Active database:** whatever the env file's variable currently points at, or in proxy mode the target file `.git/sidetrack-proxy-target` (`Workspace::active_db`). Never the registry.
 - **Which databases exist:** the Postgres server. The SQLite registry (`registry.rs`) is only a record. `Planner::reconcile` reports mismatches as warnings and never auto-fixes them.
 
 ### Choosing a base for a new branch (`migrations.rs`, `Planner::auto_base`)
@@ -86,6 +89,15 @@ Never parse compose YAML. Detection combines three outputs of `docker compose co
 - **`--no-interpolate`:** keeps `${VAR}` references, so you can follow them into the project `.env`.
 
 Detection is a pure function of those models plus the repo files, so tests feed it JSON fixtures.
+
+### Proxy (`proxy.rs`, `routing.mode = "proxy"`)
+
+- Blocking std threads, no async runtime.
+- It rewrites `database` in the startup message only when it equals `routing.database`, and leaves other names alone.
+- After that it only relays bytes, so authentication passes through untouched.
+- A watcher polls the target file, and when the target changes it closes the app's connections to the old database.
+- Plans use `Step::SetProxyTarget` instead of `RewriteEnv`. They restart only the services that were stopped for a copy.
+- Tests use a fake upstream (unit) and `tests/e2e/proxy.sh` (real Docker).
 
 ### Naming (`naming.rs`)
 

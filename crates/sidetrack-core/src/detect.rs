@@ -609,6 +609,9 @@ impl Detection {
                 file: routing.file.clone(),
                 variable: routing.variable.clone(),
                 restart: routing.services.clone(),
+                database: None,
+                listen: None,
+                upstream: None,
             },
             migrations: MigrationsConfig {
                 tool: self.migrations.tool.clone(),

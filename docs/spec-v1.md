@@ -263,7 +263,7 @@ Global flags: `--dry-run`, `--json`, `--yes`.
 
 These are reasons for the architecture decisions below:
 
-- **Local proxy routing (v2):** the app always connects to its normal DB name, and the proxy rewrites the database name in the Postgres startup message. Routing must therefore be behind a `Router` interface (`env` now, `proxy` later).
+- ✅ **Local proxy routing (v2):** the app always connects to its normal DB name, and the proxy rewrites the database name in the Postgres startup message. Built as `routing.mode = "proxy"` and `sidetrack proxy`; see plan-v1.md, "Local proxy (v2)".
 - **Tauri desktop app (v1.5):**
   - Read-only maps of git branches, DB branches, containers and commits; plan previews and schema diffs.
   - Later, approvals: the hook sends the plan to the running app over a local socket when there is no TTY.

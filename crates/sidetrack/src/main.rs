@@ -113,6 +113,12 @@ enum Command {
     },
     /// Follow a git branch rename: move OLD's DB branch to NEW.
     Rename { old: String, new: String },
+    /// Run the local Postgres proxy (routing.mode = "proxy"). Stays in the foreground.
+    Proxy {
+        /// Address to listen on (default: routing.listen, else 127.0.0.1:54320).
+        #[arg(long)]
+        listen: Option<String>,
+    },
 }
 
 #[derive(Subcommand)]
@@ -176,6 +182,7 @@ fn dispatch(command: Command, dir: &Path, opts: &Opts) -> Result<bool> {
         Command::Status => status(dir, opts),
         Command::List => list(dir, opts),
         Command::Doctor => doctor(dir, opts),
+        Command::Proxy { listen } => proxy(dir, listen),
         Command::Hook { action } => {
             let git = Git::discover(dir)?;
             let msg = match action {
@@ -414,7 +421,7 @@ fn init(dir: &Path, opts: &Opts, main_branch: Option<String>, no_hook: bool) -> 
         }
     }
 
-    if ws.git.is_tracked(&ws.cfg.routing.file)? {
+    if !ws.cfg.routing.is_proxy() && ws.git.is_tracked(&ws.cfg.routing.file)? {
         println!(
             "! {} is tracked by git. sidetrack won't rewrite it; move {} into an untracked file first.",
             ws.cfg.routing.file, ws.cfg.routing.variable
@@ -490,6 +497,18 @@ fn status(dir: &Path, opts: &Opts) -> Result<bool> {
         return Ok(true);
     }
     println!("Git branch:  {}", branch.as_deref().unwrap_or("(detached)"));
+    if let Some(up) = world.proxy_running {
+        println!(
+            "Proxy:       {} on {}{}",
+            ws.cfg.routing.database.as_deref().unwrap_or("?"),
+            ws.cfg.routing.listen_addr(),
+            if up {
+                ""
+            } else {
+                "  ✗ not running (`sidetrack proxy`)"
+            }
+        );
+    }
     println!(
         "Database:    {}{}",
         active.as_deref().unwrap_or("?"),
@@ -686,35 +705,56 @@ fn doctor(dir: &Path, opts: &Opts) -> Result<bool> {
         },
     );
 
-    match ws.active_db() {
-        Ok(Some(db)) => check(
-            "env file",
-            true,
-            format!(
-                "{} in {} → {db}",
-                ws.cfg.routing.variable, ws.cfg.routing.file
+    if ws.cfg.routing.is_proxy() {
+        let target = ws.active_db().ok().flatten().unwrap_or_default();
+        let up = ws.proxy_running();
+        check(
+            "proxy",
+            up,
+            if up {
+                format!("{} → {target}", ws.cfg.routing.listen_addr())
+            } else {
+                format!(
+                    "nothing listening on {}; start it with `sidetrack proxy`",
+                    ws.cfg.routing.listen_addr()
+                )
+            },
+        );
+        match ws.proxy_upstream() {
+            Ok(u) => check("proxy upstream", true, u),
+            Err(e) => check("proxy upstream", false, format!("{e:#}")),
+        }
+    } else {
+        match ws.active_db() {
+            Ok(Some(db)) => check(
+                "env file",
+                true,
+                format!(
+                    "{} in {} → {db}",
+                    ws.cfg.routing.variable, ws.cfg.routing.file
+                ),
             ),
-        ),
-        Ok(None) => check(
-            "env file",
-            false,
-            format!(
-                "no database name in {} in {}",
-                ws.cfg.routing.variable, ws.cfg.routing.file
+            Ok(None) => check(
+                "env file",
+                false,
+                format!(
+                    "no database name in {} in {}",
+                    ws.cfg.routing.variable, ws.cfg.routing.file
+                ),
             ),
-        ),
-        Err(e) => check("env file", false, format!("{e:#}")),
+            Err(e) => check("env file", false, format!("{e:#}")),
+        }
+        let tracked = ws.git.is_tracked(&ws.cfg.routing.file).unwrap_or(false);
+        check(
+            "env file untracked",
+            !tracked,
+            if tracked {
+                "tracked by git; sidetrack won't rewrite it".into()
+            } else {
+                "ok".into()
+            },
+        );
     }
-    let tracked = ws.git.is_tracked(&ws.cfg.routing.file).unwrap_or(false);
-    check(
-        "env file untracked",
-        !tracked,
-        if tracked {
-            "tracked by git; sidetrack won't rewrite it".into()
-        } else {
-            "ok".into()
-        },
-    );
     let missing: Vec<&String> = ws
         .cfg
         .migrations
@@ -886,4 +926,35 @@ fn duration(seconds: f64) -> String {
         let s = seconds.round() as u64;
         format!("{}m {:02}s", s / 60, s % 60)
     }
+}
+
+/// `sidetrack proxy`: route the app's connections to the active DB branch.
+fn proxy(dir: &Path, listen: Option<String>) -> Result<bool> {
+    let ws = Workspace::open(dir)?;
+    anyhow::ensure!(
+        ws.cfg.routing.is_proxy(),
+        "routing.mode in sidetrack.toml is {:?}; set it to \"proxy\" (and routing.database) to use the proxy",
+        ws.cfg.routing.mode
+    );
+    let app_db = ws.cfg.routing.database.clone().unwrap_or_default();
+    let listen = listen.unwrap_or_else(|| ws.cfg.routing.listen_addr().to_string());
+    let upstream = ws.proxy_upstream()?;
+    let listener = std::net::TcpListener::bind(&listen)
+        .with_context(|| format!("can't listen on {listen} (is another proxy running?)"))?;
+    let target_file = ws.proxy_target_path();
+    eprintln!(
+        "sidetrack proxy: {listen} → {upstream}; {app_db} → {} (Ctrl-C to stop)",
+        sidetrack_core::proxy::read_target(&target_file, &app_db)
+    );
+    let p = sidetrack_core::proxy::Proxy {
+        app_db,
+        upstream,
+        target_file,
+        poll: std::time::Duration::from_millis(250),
+    };
+    p.serve(
+        listener,
+        std::sync::Arc::new(|m: &str| eprintln!("sidetrack proxy: {m}")),
+    )?;
+    Ok(true)
 }
