@@ -27,6 +27,8 @@ pub struct Applier<'a> {
     pub project: &'a Project,
     /// File the proxy reads the active DB branch from (proxy mode).
     pub proxy_target: PathBuf,
+    /// Hold file shared by all worktrees' proxies.
+    pub proxy_hold: PathBuf,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
@@ -310,12 +312,12 @@ impl Applier<'_> {
                 (Undo::RestoreEnv { path, content }, None)
             }
             Step::HoldConnections { db } => {
-                let path = crate::proxy::hold_path(&self.proxy_target);
+                let path = self.proxy_hold.clone();
                 crate::proxy::write_hold(&path, db, std::time::Duration::from_secs(600))?;
                 (Undo::RemoveFile(path), None)
             }
             Step::ReleaseConnections { .. } => {
-                crate::proxy::release_hold(&crate::proxy::hold_path(&self.proxy_target))?;
+                crate::proxy::release_hold(&self.proxy_hold)?;
                 (Undo::Nothing, None)
             }
             Step::SetProxyTarget {
@@ -501,6 +503,7 @@ mod tests {
             reg: &reg,
             project: &project,
             proxy_target: dir.path().join("proxy-target"),
+            proxy_hold: dir.path().join("proxy-hold"),
         };
 
         pg.drop_database("st_apply_src_db").unwrap();
