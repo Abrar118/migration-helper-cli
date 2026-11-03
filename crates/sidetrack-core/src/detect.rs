@@ -615,6 +615,8 @@ impl Detection {
                 dirs: self.migrations.dirs.clone(),
                 command,
                 seed: None,
+                version_table: None,
+                version_column: None,
             },
             compose: ComposeConfig::default(),
             git: GitConfig { main_branch },

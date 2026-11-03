@@ -72,6 +72,13 @@ pub struct MigrationsConfig {
     /// Optional shell command that seeds an empty database after migrating.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub seed: Option<String>,
+    /// Table the tool records applied migrations in. Defaults per tool
+    /// (`alembic_version`, `django_migrations`, …); required for "generic".
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub version_table: Option<String>,
+    /// Column in `version_table` naming each applied migration (generic only).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub version_column: Option<String>,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
@@ -184,6 +191,8 @@ mod tests {
                 dirs: vec!["alembic/versions".into()],
                 command: "docker compose exec -T api alembic upgrade head".into(),
                 seed: None,
+                version_table: None,
+                version_column: None,
             },
             compose: ComposeConfig::default(),
             git: GitConfig::default(),

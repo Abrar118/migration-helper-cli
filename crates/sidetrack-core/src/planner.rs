@@ -11,6 +11,7 @@ use crate::git::Git;
 use crate::migrations::{self, Candidate, CandidateKind};
 use crate::naming;
 use crate::plan::{Plan, PlanKind, Step};
+use crate::readers::Reading;
 use crate::registry::{DbBranch, FileSet, Project, Snapshot};
 
 /// Everything the planner needs to know, gathered up front.
@@ -31,6 +32,16 @@ pub struct World {
     /// Disk space where the database container keeps its data, if known.
     #[serde(default)]
     pub disk: Option<DiskSpace>,
+    /// What each database's version table says (only for tools with a reader).
+    /// When present, it replaces sidetrack's own records as the truth.
+    #[serde(default)]
+    pub readings: BTreeMap<String, Reading>,
+    /// The version table read, e.g. "alembic_version".
+    #[serde(default)]
+    pub version_table: Option<String>,
+    /// Why reading the version tables failed, if it did.
+    #[serde(default)]
+    pub reader_error: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
@@ -51,6 +62,25 @@ pub struct Planner<'a> {
     pub cfg: &'a Config,
     pub git: &'a Git,
     pub world: &'a World,
+}
+
+/// What a DB branch holds (see `Planner::db_state`).
+struct DbState {
+    applied: FileSet,
+    may_contain: FileSet,
+    unknown: Vec<String>,
+    from_table: bool,
+}
+
+/// Applied / pending / unknown migrations for one DB branch, for `status`.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct MigrationStatus {
+    pub db_name: String,
+    /// "per alembic_version", or "per sidetrack's records".
+    pub source: String,
+    pub applied: usize,
+    pub pending: Vec<String>,
+    pub unknown: Vec<String>,
 }
 
 /// The source a new database is copied from.
@@ -173,28 +203,81 @@ impl<'a> Planner<'a> {
     }
 
     /// Live databases a new branch could be copied from.
+    /// What a live DB branch holds. From its version table when it was read;
+    /// otherwise from sidetrack's records plus its git branch.
+    fn db_state(&self, b: &DbBranch) -> Result<DbState> {
+        if let Some(r) = self.world.readings.get(&b.db_name) {
+            let mut may_contain = r.files.clone();
+            // Rows that match no known file can't be in any target, which makes
+            // this database incompatible with every branch (as it should be).
+            may_contain.extend(r.unknown.iter().map(|u| format!("?unknown/{u}")));
+            return Ok(DbState {
+                applied: r.files.clone(),
+                may_contain,
+                unknown: r.unknown.clone(),
+                from_table: true,
+            });
+        }
+        // Over-count: what's recorded plus what its git branch now has.
+        // A larger set only makes the candidate less likely to be picked.
+        let mut may_contain = b.migration_files.clone();
+        if self.git.branch_exists(&b.git_branch)? {
+            may_contain.extend(migrations::files_at(
+                self.git,
+                &b.git_branch,
+                &self.cfg.migrations.dirs,
+            )?);
+        }
+        Ok(DbState {
+            applied: b.migration_files.clone(),
+            may_contain,
+            unknown: vec![],
+            from_table: false,
+        })
+    }
+
+    /// Where migration facts come from, for messages.
+    fn source(&self, from_table: bool) -> String {
+        match (&self.world.version_table, from_table) {
+            (Some(t), true) => format!("per {t}"),
+            _ => "per sidetrack's records".to_string(),
+        }
+    }
+
+    /// Applied / pending / unknown migrations for a git branch's DB branch.
+    pub fn migration_status(&self, git_branch: &str) -> Result<Option<MigrationStatus>> {
+        let Some(b) = self
+            .branch_for_git(git_branch)
+            .filter(|b| self.live(&b.db_name))
+        else {
+            return Ok(None);
+        };
+        let target = self.target_files(git_branch)?;
+        let state = self.db_state(b)?;
+        let mut unknown = migrations::unknown(&target, &state.applied);
+        unknown.extend(state.unknown.iter().cloned());
+        Ok(Some(MigrationStatus {
+            db_name: b.db_name.clone(),
+            source: self.source(state.from_table),
+            applied: state.applied.len(),
+            pending: migrations::pending(&target, &state.applied),
+            unknown,
+        }))
+    }
+
     fn candidates(&self) -> Result<Vec<Candidate>> {
         let mut out = vec![];
         for b in &self.world.branches {
             if !self.live(&b.db_name) {
                 continue;
             }
-            // Over-count: what's recorded plus what its git branch now has.
-            // A larger set only makes the candidate less likely to be picked.
-            let mut files = b.migration_files.clone();
-            if self.git.branch_exists(&b.git_branch)? {
-                files.extend(migrations::files_at(
-                    self.git,
-                    &b.git_branch,
-                    &self.cfg.migrations.dirs,
-                )?);
-            }
+            let state = self.db_state(b)?;
             out.push(Candidate {
                 db_name: b.db_name.clone(),
                 kind: CandidateKind::Branch,
                 git_branch: b.git_branch.clone(),
-                files,
-                applied: b.migration_files.clone(),
+                files: state.may_contain,
+                applied: state.applied,
                 recency: b.last_used_at,
             });
         }
@@ -226,16 +309,18 @@ impl<'a> Planner<'a> {
                 CandidateKind::Branch => format!("DB branch of {}", c.git_branch),
                 CandidateKind::Snapshot => format!("snapshot of {}", c.git_branch),
             };
+            let from_table = c.kind == CandidateKind::Branch && self.world.readings.contains_key(&c.db_name);
             Base {
                 db_name: c.db_name.clone(),
                 applied: c.applied.clone(),
                 parent_db,
                 why: format!(
                     "{} is the closest compatible base ({what}; holds no migration this branch lacks; \
-                     {} of {} migrations known to be applied)",
+                     {} of {} migrations applied {})",
                     c.db_name,
                     c.applied.len(),
-                    target.len()
+                    target.len(),
+                    self.source(from_table)
                 ),
             }
         }))
@@ -254,7 +339,7 @@ impl<'a> Planner<'a> {
             );
             return Ok(Base {
                 db_name: b.db_name.clone(),
-                applied: b.migration_files.clone(),
+                applied: self.db_state(b)?.applied,
                 parent_db: Some(b.db_name.clone()),
                 why: format!("copying {} as requested", b.db_name),
             });
@@ -307,17 +392,24 @@ impl<'a> Planner<'a> {
 
         match self.branch_for_git(git_branch) {
             Some(b) if self.live(&b.db_name) => {
-                let unknown = migrations::unknown(&target, &b.migration_files);
+                let state = self.db_state(b)?;
+                let mut unknown = migrations::unknown(&target, &state.applied);
+                unknown.extend(state.unknown.iter().cloned());
                 if !unknown.is_empty() {
+                    let names: Vec<&str> = unknown
+                        .iter()
+                        .map(|u| u.rsplit('/').next().unwrap_or(u))
+                        .collect();
                     plan.warnings.push(format!(
-                        "{} has {} migration(s) that {git_branch} doesn't have ({}); \
+                        "{} has {} migration(s) that {git_branch} doesn't have ({}, {}); \
                          consider `sidetrack reset` if your migration tool complains",
                         b.db_name,
                         unknown.len(),
-                        unknown.join(", ")
+                        names.join(", "),
+                        self.source(state.from_table)
                     ));
                 }
-                let pending = migrations::pending(&target, &b.migration_files);
+                let pending = migrations::pending(&target, &state.applied);
                 if b.db_name == active {
                     plan.summary = format!("{git_branch} is already on {}", b.db_name);
                     if !pending.is_empty() {
@@ -585,7 +677,7 @@ impl<'a> Planner<'a> {
             seq: next_seq,
             label: label.map(str::to_string),
             commit_id: self.git.head_commit().ok(),
-            migration_files: b.migration_files.clone(),
+            migration_files: self.db_state(b)?.applied,
             size_bytes: self.size(&b.db_name),
         });
         if !running.is_empty() {
@@ -1041,6 +1133,8 @@ mod tests {
                 dirs: vec!["migrations".into()],
                 command: "./migrate".into(),
                 seed: Some("./seed".into()),
+                version_table: None,
+                version_column: None,
             },
             compose: ComposeConfig::default(),
             git: GitConfig {
@@ -1100,6 +1194,9 @@ mod tests {
             running_services: vec!["api".into()],
             env_file_tracked: false,
             disk: None,
+            readings: BTreeMap::new(),
+            version_table: None,
+            reader_error: None,
         }
     }
 
@@ -1482,6 +1579,104 @@ mod tests {
                 }
             ]
         );
+    }
+
+    /// With only records, a DB whose git branch moved on looks like it might hold
+    /// the new migration, so an older branch can't use it. Its version table says
+    /// otherwise.
+    #[test]
+    fn reading_lets_an_older_branch_reuse_a_db_behind_its_branch() {
+        let (_d, repo) = repo();
+        commit_file(&repo, "migrations/001.sql", "1");
+        git(&repo, &["checkout", "-q", "-b", "old", "HEAD"]);
+        git(&repo, &["checkout", "-q", "main"]);
+        commit_file(&repo, "migrations/004.sql", "4");
+        git(&repo, &["checkout", "-q", "old"]);
+
+        let mut w = world(
+            vec![branch(1, "main", "app_dev", &["001.sql"], 1)],
+            "app_dev",
+        );
+        let c = cfg();
+        let without = Planner::new(&c, &repo, &w).switch("old").unwrap();
+        assert!(
+            kinds(&without).contains(&"create_empty"),
+            "{}",
+            without.render(true)
+        );
+
+        w.readings.insert(
+            "app_dev".into(),
+            Reading {
+                files: files(&["001.sql"]),
+                unknown: vec![],
+            },
+        );
+        w.version_table = Some("schema_migrations".into());
+        let with = Planner::new(&c, &repo, &w).switch("old").unwrap();
+        assert!(kinds(&with).contains(&"clone"), "{}", with.render(true));
+        assert!(
+            with.notes
+                .iter()
+                .any(|n| n.contains("per schema_migrations")),
+            "{:?}",
+            with.notes
+        );
+    }
+
+    #[test]
+    fn unknown_rows_rule_a_database_out_and_drive_warnings() {
+        let (_d, repo) = repo();
+        commit_file(&repo, "migrations/001.sql", "1");
+        git(&repo, &["checkout", "-q", "-b", "feature"]);
+
+        let mut w = world(
+            vec![
+                branch(1, "main", "main_db", &["001.sql"], 1),
+                branch(2, "x", "x_db", &["001.sql"], 2),
+            ],
+            "main_db",
+        );
+        w.readings.insert(
+            "main_db".into(),
+            Reading {
+                files: files(&["001.sql"]),
+                unknown: vec![],
+            },
+        );
+        // x_db's table has a row no branch knows (its branch was deleted).
+        w.readings.insert(
+            "x_db".into(),
+            Reading {
+                files: files(&["001.sql"]),
+                unknown: vec!["999_gone".into()],
+            },
+        );
+        let c = cfg();
+        let p = Planner::new(&c, &repo, &w);
+        let plan = p.switch("feature").unwrap();
+        assert!(plan
+            .steps
+            .iter()
+            .any(|s| matches!(s, Step::CloneDatabase { source, .. } if source == "main_db")));
+
+        // Switching to x warns about the unknown row, and nothing is pending.
+        w.active_db = Some("main_db".into());
+        let mut w2 = w.clone();
+        w2.branches[1].git_branch = "feature".into();
+        let plan = Planner::new(&c, &repo, &w2).switch("feature").unwrap();
+        assert!(
+            plan.warnings.iter().any(|x| x.contains("999_gone")),
+            "{:?}",
+            plan.warnings
+        );
+        assert!(!kinds(&plan).contains(&"migrate"));
+        let status = Planner::new(&c, &repo, &w2)
+            .migration_status("feature")
+            .unwrap()
+            .unwrap();
+        assert_eq!(status.unknown, ["999_gone"]);
+        assert!(status.pending.is_empty());
     }
 
     #[test]

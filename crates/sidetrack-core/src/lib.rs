@@ -14,6 +14,7 @@ pub mod naming;
 pub mod plan;
 pub mod planner;
 pub mod process;
+pub mod readers;
 pub mod registry;
 pub mod schema;
 pub mod workspace;

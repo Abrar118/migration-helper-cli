@@ -472,6 +472,10 @@ fn status(dir: &Path, opts: &Opts) -> Result<bool> {
         }
         None => None,
     };
+    let migrations_status = match &branch {
+        Some(b) => planner.migration_status(b)?,
+        None => None,
+    };
     let in_sync = plan.as_ref().is_some_and(|p| p.is_noop());
 
     if opts.json {
@@ -480,6 +484,7 @@ fn status(dir: &Path, opts: &Opts) -> Result<bool> {
             json!({
                 "git_branch": branch, "active_db": active, "linked_branch": linked,
                 "expected_db": expected, "in_sync": in_sync, "warnings": planner.reconcile(), "plan": plan,
+                "migrations": migrations_status, "reader_error": world.reader_error,
             })
         );
         return Ok(true);
@@ -497,6 +502,21 @@ fn status(dir: &Path, opts: &Opts) -> Result<bool> {
             "Expected:    {}",
             expected
                 .unwrap_or_else(|| format!("{} (not created yet)", naming::db_name_for_branch(b)))
+        );
+    }
+    if let Some(m) = &migrations_status {
+        println!(
+            "Migrations:  {} applied in {} ({}) · {} pending · {} unknown to this branch",
+            m.applied,
+            m.db_name,
+            m.source,
+            m.pending.len(),
+            m.unknown.len()
+        );
+    }
+    if let Some(e) = &world.reader_error {
+        println!(
+            "  ! couldn't read the migration version table, so sidetrack's records were used: {e}"
         );
     }
     match &plan {
