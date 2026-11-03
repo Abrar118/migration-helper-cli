@@ -101,4 +101,4 @@ Plans serialize to JSON (`--json`) as `{"type": "<snake_case>", …}`, and that 
 
 - User-facing messages are plain sentences that say what to do next (e.g. "start the database first: `docker compose up -d db`").
 - Commit messages use `feat(core):`, `feat(cli):`, `docs:`, `chore:` prefixes.
-- `main` is protected (see `.github/CODEOWNERS`). Work on a branch and open a PR.
+- `main` only changes through pull requests. Direct pushes are blocked for everyone, admins included, and so are force-pushes and deleting the branch. No approval is required, so the owner merges their own PRs. Work on a branch, push it, and open a PR.
