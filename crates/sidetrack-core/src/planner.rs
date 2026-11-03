@@ -468,7 +468,7 @@ impl<'a> Planner<'a> {
         if self.cfg.routing.is_proxy() {
             if self.world.proxy_running == Some(false) {
                 plan.warnings.push(
-                    "the proxy isn't running, so the app can't reach any database; start it with `sidetrack proxy`"
+                    "the proxy isn't running, so the app can't reach any database; start it with `sidetrack proxy --daemon`"
                         .to_string(),
                 );
             }
@@ -1307,7 +1307,7 @@ mod tests {
         assert!(plan
             .warnings
             .iter()
-            .any(|x| x.contains("`sidetrack proxy`")));
+            .any(|x| x.contains("`sidetrack proxy --daemon`")));
     }
 
     #[test]

@@ -60,6 +60,9 @@ enum Command {
         /// Don't offer to install the git hook.
         #[arg(long)]
         no_hook: bool,
+        /// Route the app through `sidetrack proxy` instead of rewriting its env file.
+        #[arg(long)]
+        proxy: bool,
     },
     /// Show the current branch, the active database and whether they match.
     Status,
@@ -118,6 +121,12 @@ enum Command {
         /// Address to listen on (default: routing.listen, else 127.0.0.1:54320).
         #[arg(long)]
         listen: Option<String>,
+        /// Run in the background (log and pid file in .git/).
+        #[arg(long, conflicts_with = "stop")]
+        daemon: bool,
+        /// Stop a proxy started with --daemon.
+        #[arg(long)]
+        stop: bool,
     },
 }
 
@@ -178,11 +187,20 @@ fn dispatch(command: Command, dir: &Path, opts: &Opts) -> Result<bool> {
         Command::Init {
             main_branch,
             no_hook,
-        } => init(dir, opts, main_branch, no_hook),
+            proxy,
+        } => init(dir, opts, main_branch, no_hook, proxy),
         Command::Status => status(dir, opts),
         Command::List => list(dir, opts),
         Command::Doctor => doctor(dir, opts),
-        Command::Proxy { listen } => proxy(dir, listen),
+        Command::Proxy {
+            listen,
+            daemon,
+            stop,
+        } => match (daemon, stop) {
+            (_, true) => proxy_stop(dir),
+            (true, _) => proxy_daemon(dir, listen),
+            _ => proxy(dir, listen),
+        },
         Command::Hook { action } => {
             let git = Git::discover(dir)?;
             let msg = match action {
@@ -270,7 +288,13 @@ fn plan_command(command: Command, dir: &Path, opts: &Opts) -> Result<bool> {
 
 // ------------------------------------------------------------------------ init
 
-fn init(dir: &Path, opts: &Opts, main_branch: Option<String>, no_hook: bool) -> Result<bool> {
+fn init(
+    dir: &Path,
+    opts: &Opts,
+    main_branch: Option<String>,
+    no_hook: bool,
+    proxy: bool,
+) -> Result<bool> {
     let git = Git::discover(dir)?;
     let root = git.root().to_path_buf();
     anyhow::ensure!(
@@ -292,6 +316,12 @@ fn init(dir: &Path, opts: &Opts, main_branch: Option<String>, no_hook: bool) -> 
             "Using the existing {}.",
             sidetrack_core::config::CONFIG_FILE
         );
+        if proxy && !cfg.routing.is_proxy() {
+            bail!(
+                "{} already exists in env mode; edit [routing] by hand (see the README's proxy section)",
+                sidetrack_core::config::CONFIG_FILE
+            );
+        }
         let name = compose_for(&cfg, &root).config(ConfigView::Resolved)?.name;
         (cfg, name)
     } else {
@@ -316,9 +346,35 @@ fn init(dir: &Path, opts: &Opts, main_branch: Option<String>, no_hook: bool) -> 
         } else {
             println!("Detected:\n{}", found.render());
         }
-        let cfg = found.to_config(main_branch.clone()).context(
+        let mut cfg = found.to_config(main_branch.clone()).context(
             "detection is incomplete; write sidetrack.toml by hand (see README) and run `sidetrack init` again",
         )?;
+        if proxy {
+            let env = Workspace::from_parts(
+                git.clone(),
+                cfg.clone(),
+                Registry::open(&registry::default_path()?)?,
+            );
+            let app_db = env.active_db()?.with_context(|| {
+                format!(
+                    "can't read the app's database name from {} in {}",
+                    cfg.routing.variable, cfg.routing.file
+                )
+            })?;
+            println!(
+                "Proxy mode: point {} in {} at the proxy, once: host `host.docker.internal` from containers \
+                 (`localhost` from this machine), port {}, database {app_db}.\n\
+                 On Linux, containers also need `extra_hosts: [\"host.docker.internal:host-gateway\"]` \
+                 and the proxy must listen on 0.0.0.0 (routing.listen).",
+                cfg.routing.variable,
+                cfg.routing.file,
+                sidetrack_core::config::DEFAULT_PROXY_LISTEN
+                    .rsplit(':')
+                    .next()
+                    .unwrap_or_default()
+            );
+            cfg.routing.use_proxy(&app_db);
+        }
         if opts.dry_run {
             println!("{}", cfg.to_toml()?);
             return Ok(true);
@@ -956,5 +1012,105 @@ fn proxy(dir: &Path, listen: Option<String>) -> Result<bool> {
         listener,
         std::sync::Arc::new(|m: &str| eprintln!("sidetrack proxy: {m}")),
     )?;
+    Ok(true)
+}
+
+fn proxy_files(ws: &Workspace) -> Result<(PathBuf, PathBuf)> {
+    Ok((
+        ws.git.git_path("sidetrack-proxy.pid")?,
+        ws.git.git_path("sidetrack-proxy.log")?,
+    ))
+}
+
+/// `sidetrack proxy --daemon`: start the proxy in the background and wait until it listens.
+fn proxy_daemon(dir: &Path, listen: Option<String>) -> Result<bool> {
+    let ws = Workspace::open(dir)?;
+    anyhow::ensure!(
+        ws.cfg.routing.is_proxy(),
+        "routing.mode in sidetrack.toml isn't \"proxy\""
+    );
+    if listen.is_none() && ws.proxy_running() {
+        println!(
+            "The proxy is already running on {}.",
+            ws.cfg.routing.listen_addr()
+        );
+        return Ok(true);
+    }
+    let (pid_file, log_file) = proxy_files(&ws)?;
+    let log = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&log_file)
+        .with_context(|| format!("opening {}", log_file.display()))?;
+    let mut cmd = std::process::Command::new(std::env::current_exe()?);
+    cmd.arg("-C").arg(&ws.root).arg("proxy");
+    if let Some(l) = &listen {
+        cmd.args(["--listen", l]);
+    }
+    cmd.stdin(std::process::Stdio::null())
+        .stdout(log.try_clone()?)
+        .stderr(log);
+    #[cfg(unix)]
+    {
+        // Its own process group, so Ctrl-C in this terminal doesn't stop it.
+        use std::os::unix::process::CommandExt;
+        cmd.process_group(0);
+    }
+    let mut child = cmd.spawn().context("starting the proxy")?;
+    let addr = listen.unwrap_or_else(|| ws.cfg.routing.listen_addr().to_string());
+    let probe = addr.replace("0.0.0.0", "127.0.0.1");
+    for _ in 0..50 {
+        if let Some(status) = child.try_wait()? {
+            let text = std::fs::read_to_string(&log_file).unwrap_or_default();
+            let last = text.lines().last().unwrap_or("");
+            bail!(
+                "the proxy stopped right away ({status}): {last}\nFull log: {}",
+                log_file.display()
+            );
+        }
+        if std::net::TcpStream::connect(&probe).is_ok() {
+            std::fs::write(&pid_file, format!("{}\n", child.id()))?;
+            println!(
+                "Proxy running on {addr} (pid {}). Log: {}. Stop it with `sidetrack proxy --stop`.",
+                child.id(),
+                log_file.display()
+            );
+            return Ok(true);
+        }
+        std::thread::sleep(std::time::Duration::from_millis(100));
+    }
+    let _ = child.kill();
+    bail!(
+        "the proxy didn't start listening on {addr}; see {}",
+        log_file.display()
+    )
+}
+
+/// `sidetrack proxy --stop`.
+fn proxy_stop(dir: &Path) -> Result<bool> {
+    let ws = Workspace::open(dir)?;
+    let (pid_file, _) = proxy_files(&ws)?;
+    let Ok(pid) = std::fs::read_to_string(&pid_file) else {
+        if ws.proxy_running() {
+            bail!(
+                "something is listening on {}, but it wasn't started with `sidetrack proxy --daemon`; stop it where it runs",
+                ws.cfg.routing.listen_addr()
+            );
+        }
+        println!("The proxy isn't running.");
+        return Ok(true);
+    };
+    let pid = pid.trim();
+    let killed = std::process::Command::new("kill")
+        .arg(pid)
+        .stderr(std::process::Stdio::null())
+        .status()
+        .is_ok_and(|s| s.success());
+    std::fs::remove_file(&pid_file)?;
+    if killed {
+        println!("Stopped the proxy (pid {pid}).");
+    } else {
+        println!("The proxy (pid {pid}) had already stopped.");
+    }
     Ok(true)
 }

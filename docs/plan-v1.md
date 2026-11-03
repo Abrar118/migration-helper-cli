@@ -116,6 +116,9 @@ Decisions:
 19. **No TLS between app and proxy.** It's local traffic. Clients with `sslmode=require` fail, and the docs say to use `prefer` or `disable`.
 20. **Plans warn when the proxy isn't running** (`World.proxy_running`). They don't refuse, because the target can be set before the proxy starts.
 
+21. **`proxy --daemon` re-runs the binary in the background.** It's a child process in its own process group, so Ctrl-C in the terminal doesn't stop it, with stdout/stderr going to `.git/sidetrack-proxy.log`. The pid goes in `.git/sidetrack-proxy.pid` once the port accepts connections. `--stop` sends `kill` to that pid. There's no fork or libc, which keeps it simple, at the cost of being Unix-only for now.
+22. **`init --proxy` never edits the app's env file.** It writes proxy-mode config, with `routing.database` read from the detected env variable, and prints the one-time URL change for the user to make.
+
 `tests/e2e/proxy.sh` covers it all against real Docker. The app container reaches the host proxy via `host.docker.internal` (`extra_hosts: host-gateway` on Linux).
 
 ## Test strategy
