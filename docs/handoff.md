@@ -37,9 +37,9 @@ Notes for macOS:
 - **`tests/e2e/run.sh`** uses `script` for its terminal-prompt step, with util-linux syntax (`script -qec`). BSD `script` takes different flags, so that one step may need a tweak.
 - **`tests/e2e/proxy.sh`** relies on `host.docker.internal`, which Docker Desktop provides. It hasn't been run on a Mac yet.
 
-Notes for native Windows (spec open question 6 is still undecided). It builds, but 2 unit tests in `detect.rs` fail:
-- **`django_multi_app_dirs`** is a real bug. `relative()` uses `to_string_lossy()`, so `init` would write `migrations.dirs` with backslashes, and `git ls-tree` needs `/`.
-- **`alembic_in_container_with_env_file`** is a test-only problem: the test pastes a backslash path into JSON.
+Notes for native Windows (spec open question 6 is still undecided):
+- **Unit tests:** `cargo build` and `cargo test` pass. Detection always writes paths with `/` (`detect::relative`), both repo paths and paths inside containers.
+- **Untested:** the e2e scripts, the git hook, and `proxy --daemon` (Unix-only).
 
 ## How the proxy works (v2, done)
 

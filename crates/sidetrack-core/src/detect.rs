@@ -350,11 +350,13 @@ fn variable_reference(raw: &str) -> Option<String> {
     None
 }
 
+/// `path` relative to `root`, with `/` separators on every OS: it ends up in
+/// sidetrack.toml and in `git ls-tree` paths, which need `/`.
 fn relative(root: &Path, path: &Path) -> String {
     path.strip_prefix(root)
         .unwrap_or(path)
         .to_string_lossy()
-        .into_owned()
+        .replace(std::path::MAIN_SEPARATOR, "/")
 }
 
 // ---------------------------------------------------------------- migrations
@@ -575,14 +577,14 @@ fn detect_migrations(
             }
             let inner = match container {
                 Some(target) => {
-                    let sub = anchor_dir.strip_prefix(&host).unwrap_or(Path::new(""));
-                    Some(
-                        PathBuf::from(target)
-                            .join(sub)
-                            .to_string_lossy()
-                            .trim_end_matches('/')
-                            .to_string(),
-                    )
+                    // A path inside the (Linux) container: always `/`, even on Windows.
+                    let sub = relative(&host, &anchor_dir);
+                    let target = target.trim_end_matches('/');
+                    Some(if sub.is_empty() {
+                        target.to_string()
+                    } else {
+                        format!("{target}/{sub}")
+                    })
                 }
                 None => None,
             };
@@ -765,7 +767,8 @@ mod tests {
     fn alembic_in_container_with_env_file() {
         let dir = tempfile::tempdir().unwrap();
         let root = dir.path();
-        let r = root.display();
+        // Escaped for JSON: Windows paths have backslashes.
+        let r = root.display().to_string().replace('\\', "\\\\");
         write(
             root,
             "api/alembic.ini",
