@@ -151,6 +151,11 @@ components:
   slug-line:
     textColor: "{colors.key-black}"
     typography: "{typography.slug}"
+  registration-target:
+    textColor: "{colors.key-black}"
+    size: "45px"
+  tint-ramp:
+    size: "34px"
 ---
 
 # Design System: sidetrack
@@ -170,6 +175,7 @@ Density is low and the scale is large. Rows carry a 24px name and one plain sent
 - A colour bar whose patches are the plan's steps, each in its family's ink.
 - One grotesk (Familjen Grotesk) with Courier Prime only for identifiers and slugs.
 - Hairline 1px rules between rows and steps; 2px key borders on the sign-off box and its buttons.
+- A registration target on a sheet with nothing to sign off, when everything is in register.
 - Motion is ink laid down left to right with a clip-path wipe.
 
 ## Colors
@@ -189,7 +195,7 @@ Neutral paper and key black carry the interface; four printing inks carry meanin
 
 ### Neutral
 - **Light Table** (light `light-table`, dark `light-table-night`): the app ground behind sheets, row and secondary-button hover, the empty part of the disk meter.
-- **Paper** (light `paper`, dark `paper-night`): the left column, proof sheets, the sign-off footer and theme options.
+- **Paper** (light `paper`, dark `paper-night`): the left column, proof sheets (Settings is one too) and the sign-off footer.
 - **Soft Ink** (light `soft-ink`, dark `soft-ink-night`): labels, notes, pending steps, row state sentences, inactive nav.
 - **Rule Grey** (light `rule-grey`, dark `rule-night`): 1px hairlines between rows and steps, the column edge, the scrollbar and disabled button borders.
 
@@ -232,9 +238,11 @@ Neutral paper and key black carry the interface; four printing inks carry meanin
 
 Two columns: a 360px paper column (320px below 1280px wide) and a light-table main area that scrolls. The column has a 28px inset throughout. The main area pads 34px on top and `clamp(32px, 4.5vw, 64px)` on the sides, with no bottom padding so the sign-off can reach the window edge.
 
-A proof sheet fills at least `100vh - 150px`, so the sign-off footer sits at the sheet's foot. The sheet body pads 30px 44px (26px 32px below 1280px). Facts sit in two equal columns with a 40px gap and stack below 1280px. In windows under 820px tall, the sheet footer becomes sticky at the bottom with a 1px top rule, and vertical spacing tightens (row padding 13/15px, colour bar 66px).
+The lead line above a sheet shares a row with its side (path · mode, then text buttons) only when the sentence fits on one line beside it; otherwise the side drops below, right-aligned, and the sentence takes the full width. The sentence wraps pretty (balanced where `pretty` isn't supported), so a database name or a last word never sits alone on a line. Side items are kept whole and break only after a " · ".
 
-Rhythm: 2px gaps between patches and theme options; 6 and 10px inside groups; 18 to 22px between blocks; 28px column inset; 40 to 44px for sheet padding and fact gaps. Prose is capped at 75ch.
+A proof sheet fills at least `100vh - 150px`, so the sign-off footer sits at the sheet's foot. The sheet body pads 30px 44px (26px 32px below 1280px). Facts sit in two equal columns with a 40px gap and stack below 1280px. The sheet footer is always sticky at the window's bottom edge: on a proof taller than the window, the slug and sign-off stay in reach and a 1px rule-grey line marks where the footer starts over the steps; when the proof fits, or once scrolled to its end, it sits in place with no rule. In windows under 820px tall, vertical spacing tightens (row padding 13/15px, colour bar 66px, footer 14/20px).
+
+Rhythm: 2px gaps between patches and between the two squares of a tint ramp; 6 and 10px inside groups; 18 to 22px between blocks; 28px column inset; 40 to 44px for sheet padding and fact gaps. Prose is capped at 75ch.
 
 ## Elevation & Depth
 
@@ -273,7 +281,19 @@ The sheet holds the DB branch tree: nodes with the Courier name at about 20px, s
 Actions sit under the selected DB node, on paper, as 16px underlined text buttons in a row ("Snapshot", "Reset to app_dev", "Rename", "Delete"), closed by a 1px key rule; a soft 15px sentence says why an action is missing ("The app uses it, so it can't be deleted"). An action that needs input opens a small field in place, never a dialog: a 15px semibold soft label over a 46px square input with a 2px key border (Courier for branch names), then a secondary "Show the plan" and a "Cancel" text button. In the column, a git branch with no database gets the same field with a select ("Create its database from"). The planner's refusals appear under the field as a Query. Choosing an action replaces the tree with its proof; Escape steps back one level (proof, field, project).
 
 ### Proof sheet with crop marks
-A paper sheet with four corner crop marks, holding in order: colour bar, title, step list, records line, Query notes, facts, then the footer with the slug line and sign-off box. Non-plan sheets (in sync, problem, empty, load error) use the same paper and crop marks without the bar or sign-off.
+A paper sheet with four corner crop marks, holding in order: colour bar, title, step list, records line, Query notes, facts, then the footer with the slug line and sign-off box.
+
+Sheets with nothing to apply (in sync, can't read, no projects, load error, Settings, the project's DB branch tree, "Nothing to clean up") use the same paper and crop marks without the colour bar or the sign-off box: the bar is a plan's steps and the box asks for an OK, so a sheet with no plan carries neither. Each uses only the devices that say something true about it:
+- **In sync** and **Nothing to clean up:** the registration target beside the title (everything is in register).
+- **Can't read** (a project, the project view, the registry): the problem set as a 22px Query, since it needs an answer before anything else.
+- **No projects:** a standalone slug, "0 projects · <registry path>", saying where sidetrack looked.
+- **Settings:** the step colours tint ramp.
+
+### Registration target
+A 45px target in key at the top right of a sheet's title: 1px crosshair and 15px-radius circle, a 7px solid centre with the cross knocked out in paper. On a press sheet it shows the plates line up; here it means sidetrack checked and everything is in register: the checked-out branch and the database the app uses ("in sync"), or every DB branch and its git branch ("Nothing to clean up"). It appears only after a successful check, never on a proof (a plan means something is out of register) and never on a sheet that couldn't be read. Hidden from screen readers; the title says the same.
+
+### Step colours (tint ramp)
+In Settings, the key to the colour bar: one row per family between 1px rules, each with two 34px squares (the family's full ink, then its 16% waiting tint mixed with the theme's paper) and a 17px line naming the family and its steps ("Cyan Copy, create, freeze or rename a database"). Full ink is a step that has run, or will once you apply; the tint is a step still waiting while a plan applies. The ramp is the only place the inks appear outside a proof, and only as the key to it.
 
 ### Colour bar and patch states
 One patch per visible step, flexed equally with 2px gaps, 78px tall. Each patch shows its numeral bottom-left and a one-word label ("Copy", "Route", "Migrate") bottom-right. The patch takes its ink from the step family:
@@ -298,7 +318,7 @@ Plan warnings start with a bold inline "Query", as on a proofreader's query, fol
 A Courier 13px line under a 1px key rule, items joined with " · " and each item kept unbroken: project, plan kind, step count, bytes added or "no copy", "nothing destructive" or "drops N databases", and "applied HH:MM" once signed.
 
 ### Sign-off box
-A 330px box with a 2px key border (spot on drop plans) holding a 22px bold heading and its actions. It records the proof's life in place: "OK to apply" with Apply and Not now; "Applying" with "Step n of N"; then "Applied", "Not applied" or "Stopped" with the result and the next action.
+A 330px box with a 2px key border (spot on drop plans) holding a 22px bold heading and its actions. It records the proof's life in place: "OK to apply" with Apply and Not now; "Applying" with "Step n of N"; then "Applied", "Not applied" or "Stopped" with the result and the next action. Once the plan has run or failed, Escape does what that action's Close (or Done) does; while it applies, Escape does nothing. The box appears only on a proof: a sheet with nothing to apply never gets a sign-off.
 
 ### Motion: the ink wipe
 Patch ink is a full-bleed layer revealed with `clip-path: inset(0 100% 0 0)` → `inset(0 0 0 0)` over 700ms ease-out, as if laid down left to right. A running patch animates toward 78% coverage over 9s and holds there until the step finishes, then completes. Patch text changes colour over 300ms. Under `prefers-reduced-motion: reduce`, transitions on patches and buttons are removed and a running patch sits still at half coverage (`inset(0 50% 0 0)`), so progress still reads without movement.
@@ -312,6 +332,7 @@ Patch ink is a full-bleed layer revealed with `clip-path: inset(0 100% 0 0)` →
 - **Do** keep corners square, rules 1px, and sign-off strokes 2px key.
 - **Do** keep the process and spot inks identical in light and dark; switch only the table, paper, key, soft and rule values.
 - **Do** keep the reduced-motion fallback: a static half-inked running patch, no transitions.
+- **Do** give a sheet a device only when it says something true about that sheet: the registration target only after a check passed, the tint ramp only as the key to the colour bar.
 
 ### Don't:
 - **Don't** use cyan, magenta or yellow for anything other than a step family.
@@ -319,3 +340,4 @@ Patch ink is a full-bleed layer revealed with `clip-path: inset(0 100% 0 0)` →
 - **Don't** use Courier for titles, labels, sentences or figures.
 - **Don't** set labels in tracked caps or add eyebrows above titles; labels are sentence-case 15px semibold soft text.
 - **Don't** add drop shadows, rounded corners or a coloured Apply button outside a drop plan.
+- **Don't** put a colour bar or a sign-off box on a sheet with no plan; an empty bar or a box with nothing to sign is decoration.

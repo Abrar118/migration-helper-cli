@@ -4,8 +4,9 @@ import { gb } from "./format";
 import { Proof } from "./Proof";
 import { ProjectList } from "./ProjectList";
 import { ProjectPage } from "./ProjectPage";
-import { EmptySheet, InSyncSheet, LoadErrorSheet, ProblemSheet } from "./Sheets";
+import { EmptySheet, InSyncSheet, LoadErrorSheet, ProblemSheet, Sheet } from "./Sheets";
 import { createsDatabase, target } from "./steps";
+import { Units } from "./text";
 import { applyTheme, loadTheme, type Theme } from "./theme";
 import type { Overview, Plan, ProjectView } from "./types";
 
@@ -149,7 +150,7 @@ export function App() {
             {loadError ? (
               <LoadErrorSheet message={loadError} />
             ) : overview && projects.length === 0 ? (
-              <EmptySheet />
+              <EmptySheet registry={overview.registry} />
             ) : project ? (
               <ProjectSheet
                 p={project}
@@ -216,12 +217,12 @@ function lead(p: ProjectView, applying: boolean): ReactNode {
 }
 
 /** Where the project is, how it routes, and (when a plan waits) what the app uses now. */
-function where(p: ProjectView): string {
-  const parts = [p.path];
+function where(p: ProjectView): ReactNode {
+  const parts: ReactNode[] = [p.path];
   if (p.mode === "proxy") parts.push(`proxy ${p.listen?.replace(/^.*:/, ":") ?? ""}`);
   else if (p.mode) parts.push("env file");
-  if (p.plan && p.active_db) parts.push(`the app is still on ${p.active_db}`);
-  return parts.join(" · ");
+  if (p.plan && p.active_db) parts.push(<>the app is still on <span className="db">{p.active_db}</span></>);
+  return <Units items={parts} />;
 }
 
 function Settings({ theme, onTheme, registry }: { theme: Theme; onTheme: (t: Theme) => void; registry: string }) {
@@ -231,8 +232,7 @@ function Settings({ theme, onTheme, registry }: { theme: Theme; onTheme: (t: The
     { value: "dark", label: "Dark", hint: "The light table at night." },
   ];
   return (
-    <section className="settings">
-      <h2>Settings</h2>
+    <Sheet label="Settings" title="Settings">
       <fieldset className="themes">
         <legend>Theme</legend>
         {options.map((o) => (
@@ -245,11 +245,41 @@ function Settings({ theme, onTheme, registry }: { theme: Theme; onTheme: (t: The
           </label>
         ))}
       </fieldset>
+      <StepColours />
       <div className="setting">
         <h3>Registry</h3>
         <p className="db">{registry}</p>
         <p className="note">One file for every project on this machine. Set SIDETRACK_REGISTRY to use another.</p>
       </div>
-    </section>
+    </Sheet>
+  );
+}
+
+/**
+ * The key to the colour bar, as a tint ramp: each step family at full ink (the
+ * step has run, or will once you apply) and at the pale tint of a step still
+ * waiting while a plan applies. The tint is mixed with this theme's paper.
+ */
+function StepColours() {
+  const families: { ink: string; name: string; steps: string }[] = [
+    { ink: "key", name: "Key", steps: "Stop or restart the app, hold or release its connections" },
+    { ink: "cyan", name: "Cyan", steps: "Copy, create, freeze or rename a database" },
+    { ink: "magenta", name: "Magenta", steps: "Point the app at another database" },
+    { ink: "yellow", name: "Yellow", steps: "Run migrations or the seed" },
+    { ink: "spot", name: "Red", steps: "Drop a database. Only drops are red." },
+  ];
+  return (
+    <div className="step-colours">
+      <h3>Step colours</h3>
+      <p className="note">Every step on a proof takes its family's ink. Full ink: the step has run, or will once you apply. Pale: it's still waiting while the plan applies.</p>
+      <ul>
+        {families.map((f) => (
+          <li key={f.ink} className={`ink-${f.ink}`}>
+            <span className="ramp" aria-hidden="true"><i /><i /></span>
+            <span><b>{f.name}</b> {f.steps}</span>
+          </li>
+        ))}
+      </ul>
+    </div>
   );
 }

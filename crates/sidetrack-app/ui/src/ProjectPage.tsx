@@ -2,8 +2,8 @@ import { Fragment, useCallback, useEffect, useRef, useState, type FormEvent, typ
 import { loadDetail, planOp } from "./api";
 import { ago, bytes, plural } from "./format";
 import { Proof } from "./Proof";
-import { Queries, Sheet } from "./Sheets";
-import { Code, sentence, Slug } from "./text";
+import { Problem, Queries, Sheet } from "./Sheets";
+import { Code, sentence, Slug, Units } from "./text";
 import type { DbBranchView, GitBranchView, Op, Plan, ProjectDetail, ServiceView } from "./types";
 
 /** What's selected. A git branch and its DB branch are selected together. */
@@ -187,9 +187,9 @@ export function ProjectPage({ root, top, planWaiting, onBack }: Props) {
 
       <main className="main">
         <div className="lead">
-          <p>{detail ? lead(detail, gitShown, dbSel) : error ? `Can't read ${name}` : " "}</p>
+          <p>{detail ? lead(detail, gitShown, dbSel, shown?.op) : error ? `Can't read ${name}` : " "}</p>
           <div className="lead-side">
-            {detail && <span className="where"><span className="nw">{detail.path}</span> · <span className="nw">{detail.mode === "proxy" ? "proxy" : "env file"}</span></span>}
+            {detail && <span className="where"><Units items={[detail.path, detail.mode === "proxy" ? "proxy" : "env file"]} /></span>}
             {planWaiting && <button className="text-button" onClick={onBack} disabled={applying}>See the switch plan</button>}
             {detail && !detail.problem && (
               <button
@@ -205,8 +205,7 @@ export function ProjectPage({ root, top, planWaiting, onBack }: Props) {
         </div>
         {shown && detail ? (
           shown.plan.steps.length === 0 ? (
-            <Sheet label="Nothing to clean up">
-              <h2>Nothing to clean up</h2>
+            <Sheet label="Nothing to clean up" title="Nothing to clean up" inRegister>
               <p className="problem-text">Every DB branch still has its git branch, and none is merged or missing.</p>
               {shown.plan.notes.map((n) => <p key={n} className="note"><Code text={sentence(n)} /></p>)}
               <div className="row standalone-row"><button className="secondary" autoFocus onClick={closeProof}>Back to the branches</button></div>
@@ -227,9 +226,8 @@ export function ProjectPage({ root, top, planWaiting, onBack }: Props) {
             />
           )
         ) : error ? (
-          <Sheet label={`Can't read ${name}`}>
-            <h2>Can't read {name}</h2>
-            <p className="problem-text"><Code text={sentence(error)} /></p>
+          <Sheet label={`Can't read ${name}`} title={`Can't read ${name}`}>
+            <Problem text={error} />
             <p className="note">Fix it, then refresh.</p>
           </Sheet>
         ) : detail ? (
@@ -240,9 +238,19 @@ export function ProjectPage({ root, top, planWaiting, onBack }: Props) {
   );
 }
 
-/** The line above the sheet: the selected pair in one sentence. */
-function lead(d: ProjectDetail, git: GitBranchView | null, db: DbBranchView | null): ReactNode {
+/**
+ * The line above the sheet: the selected pair in one sentence. Over a plan for
+ * the whole project (gc) it says why there's something to clean up instead.
+ */
+function lead(d: ProjectDetail, git: GitBranchView | null, db: DbBranchView | null, op?: Op): ReactNode {
   const Db = ({ children }: { children: ReactNode }) => <span className="db">{children}</span>;
+  if (op?.op === "gc") {
+    const n = d.db_branches.length;
+    const gone = d.db_branches.filter((b) => !b.git_branch_exists).length;
+    const branches = `${n} DB ${n === 1 ? "branch" : "branches"}`;
+    if (gone === 0) return <>{d.name} has {branches}</>;
+    return <>{gone} of {branches} {gone === 1 ? "has" : "have"} lost {gone === 1 ? "its" : "their"} git branch</>;
+  }
   if (git) {
     if (!git.db) return <><Db>{git.name}</Db> has no database yet; switching to it creates one</>;
     if (git.here && db && !db.active && d.active_db) {
@@ -396,8 +404,7 @@ function DbTree({ detail, selected, onSelect, actions }: { detail: ProjectDetail
   const nodeActions = (b: DbBranchView) => (d.problem ? null : <NodeActions b={b} detail={d} actions={actions} />);
 
   return (
-    <Sheet label={`Database branches of ${d.name}`}>
-      <h2>Database branches</h2>
+    <Sheet label={`Database branches of ${d.name}`} title="Database branches">
       <Queries warnings={queries} />
       {roots.length === 0 ? (
         <p className="problem-text tree-empty">
