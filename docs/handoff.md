@@ -14,11 +14,15 @@ Last updated 2026-11-04. Read `CLAUDE.md` first, then this.
 | More proxy follow-ups: autostart, holding connections during copies, detection with several Postgres images | merged (PR #7) |
 | Git worktrees (spec P2) | merged (PR #8) |
 | Worktree edges: env-file port wiring, env-mode warning, removal checks | merged (PR #9) |
-| **`init --proxy` accepts a DB name written in compose, plus an e2e check** | **branch `feat/init-proxy-inline`.** Merge it before starting new work. |
+| `init --proxy` accepts a DB name written in compose, plus an e2e check; Windows path fixes | merged (PR #10) |
+
+Nothing is in flight. The next item is the Tauri desktop app (see "Later, per the spec").
 
 `main` is protected. Every PR needs one approval, including a code-owner review (`@Abrar118`). The owner can bypass the rules. Force-pushes and deletion are blocked.
 
-Stale remote branches that can be deleted: `docs/v1-spec`, `feat/v1-cli`, `docs/claude-md-branch-rules`, `feat/v1.1`, `feat/migration-readers`, `feat/proxy`, `feat/proxy-followups`, `feat/proxy-followups-2`, `feat/worktrees`, `feat/worktree-edges`.
+After every PR merge, update this file: the State table, the follow-ups, and the date.
+
+Stale remote branches were deleted on 2026-11-04. Only `main` is on the remote.
 
 ## Getting going on a new machine
 
@@ -56,7 +60,7 @@ See plan-v1.md, "Local proxy (v2)", decisions 17–25.
 - ✅ **Starting the proxy automatically:** done in PR #7 (`routing.autostart`). A launchd / systemd unit, or running the proxy as a compose service, is still possible but not needed.
 - ✅ **Detection with several Postgres images:** done in PR #7.
 - ✅ **Copying without stopping the app:** done in PR #7 (holds). Rename still stops the app. It's rare, and the same `push_pause` helper would cover it.
-- ✅ **`init --proxy` end to end:** done on `feat/init-proxy-inline`. In proxy mode, detection accepts a DB name written directly in compose `environment:` (`Detection.inline`; plan decision 22). The first step of `tests/e2e/proxy.sh` runs a real `init --proxy` on a small Alembic-shaped project; Alembic itself never runs. The main proxy flow still writes `sidetrack.toml` by hand, because its "generic" migrations have no command that detection could find.
+- ✅ **`init --proxy` end to end:** done in PR #10. In proxy mode, detection accepts a DB name written directly in compose `environment:` (`Detection.inline`; plan decision 22). The first step of `tests/e2e/proxy.sh` runs a real `init --proxy` on a small Alembic-shaped project; Alembic itself never runs. The main proxy flow still writes `sidetrack.toml` by hand, because its "generic" migrations have no command that detection could find.
 - ✅ **Git worktrees:** done in PRs #8 and #9. See plan-v1.md, "Git worktrees", decisions 26–30.
   - Each worktree's env file is pointed at its own port automatically (`SetEnvPort`).
   - Removed worktrees free their port, and their database stops counting as in use.
@@ -65,7 +69,7 @@ See plan-v1.md, "Local proxy (v2)", decisions 17–25.
 
 ## Open question for the owner
 
-**Copy speed on the Mac (Docker Desktop).** Run `sidetrack bench` against a real ~2 GB project database and note the time. Linux numbers are in `plan-v1.md`: FILE_COPY took 3.9 s (13 s right after loading), WAL_LOG 11.9 s.
+**Copy speed on the Mac (Docker Desktop).** Run `sidetrack bench` against a real ~2 GB project database and note the time. Linux numbers are in `plan-v1.md`: FILE_COPY took 3.9 s (13 s right after loading), WAL_LOG 11.9 s. The owner plans to run this later (as of 2026-11-04).
 
 ## Later, per the spec
 
