@@ -18,13 +18,13 @@ Last updated 2026-11-04. Read `CLAUDE.md` first, then this.
 | Handoff update after PR #10 | merged (PR #11) |
 | Desktop app, first surface: All projects, plan proofs, Apply | merged (PR #12) |
 | Handoff update after PR #12 | merged (PR #13) |
-| Proxy-mode schema summary; the app starts the proxy like the CLI | **branch `feat/app-proxy-autostart`** |
+| Proxy-mode schema summary; the app starts the proxy like the CLI | merged (PR #14) |
 
 `main` is protected. Every PR needs one approval, including a code-owner review (`@Abrar118`). The owner can bypass the rules. Force-pushes and deletion are blocked.
 
 After every PR merge, update this file: the State table, the follow-ups, and the date.
 
-Stale remote branches were deleted on 2026-11-04. Since then, the merged branches `docs/handoff-after-pr10`, `feat/desktop-app` and `docs/handoff-after-pr12` are back on the remote. The owner will clean them up later.
+Stale remote branches were deleted on 2026-11-04. Since then, the merged branches `docs/handoff-after-pr10`, `feat/desktop-app`, `docs/handoff-after-pr12` and `feat/app-proxy-autostart` are back on the remote. The owner will clean them up later.
 
 ## Getting going on a new machine
 
@@ -95,7 +95,7 @@ See plan-v1.md, "Local proxy (v2)", decisions 17–25.
 
 **Run against real projects:** the owner ran `npm run tauri dev` against the real registry on 2026-11-04.
 
-**Starts the proxy (`feat/app-proxy-autostart`):** before reading a proxy-mode project with `routing.autostart` on, the app starts the proxy the same way the CLI does (`Workspace::proxy_needs_start` / `start_proxy`, now in the core). It runs the `sidetrack` CLI for that, looking next to the app, then on PATH, then in `~/.cargo/bin`. If that fails, the reason shows as a Query on the proof.
+**Starts the proxy (PR #14):** before reading a proxy-mode project with `routing.autostart` on, the app starts the proxy the same way the CLI does (`Workspace::proxy_needs_start` / `start_proxy`, now in the core). It runs the `sidetrack` CLI for that, looking next to the app, then on PATH, then in `~/.cargo/bin`. If that fails, the reason shows as a Query on the proof. Not yet checked on a real machine: stop the proxy in a proxy-mode project, focus the app, and the plan should hold connections rather than stop the app.
 
 **Not built yet, in rough order:**
 - **Project view:** the two linked panes the user chose, git branches on the left and the DB branch tree (parent → child) on the right, with snapshots, worktrees, container status and commit history per branch.
@@ -105,7 +105,7 @@ See plan-v1.md, "Local proxy (v2)", decisions 17–25.
 - **Design ceiling items from the finish review:** the in-sync, problem and settings sheets don't use the proof devices (colour bar, sign-off), and there's no registration target or tint ramp.
 - **Approval requests from the git hook** (v2).
 
-**Core gap, fixed on `feat/app-proxy-autostart`:** `Workspace::annotate_schema` only looked at `RewriteEnv` steps, so proxy-mode switches never got a schema summary. It now reads `SetProxyTarget` too (`schema_pair`, with a unit test).
+**Core gap, fixed in PR #14:** `Workspace::annotate_schema` only looked at `RewriteEnv` steps, so proxy-mode switches never got a schema summary. It now reads `SetProxyTarget` too (`schema_pair`, with a unit test).
 
 ## Later, per the spec
 
