@@ -185,8 +185,12 @@ function ProjectSheet(props: {
     return (
       <Proof
         key={`${p.root}:${JSON.stringify(plan.steps)}`}
-        project={p}
+        root={p.root}
+        name={p.name}
+        op={{ op: "switch" }}
         plan={plan}
+        title={`Switch ${p.name} to ${p.git_branch ?? "this branch"}`}
+        warnings={p.warnings}
         disk={disk}
         onStart={() => props.onStart(plan)}
         onClose={() => props.onClose(pinned !== null)}

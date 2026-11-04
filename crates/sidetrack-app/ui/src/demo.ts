@@ -1,8 +1,9 @@
 // Demo data for running the UI in a plain browser (`npm run dev`), where there is
 // no Rust side. It is synthetic, and the app labels it "Demo data" on screen.
 
-import type { Commit, DbBranchView, Overview, Plan, ProjectDetail, Report } from "./types";
+import type { Commit, DbBranchView, Op, Overview, Plan, ProjectDetail, Report, Step } from "./types";
 import { visibleSteps } from "./steps";
+import { bytes } from "./format";
 
 const GiB = 1024 ** 3;
 
@@ -90,11 +91,27 @@ export function demoOverview(): Promise<Overview> {
   return new Promise((r) => setTimeout(() => r(overview), 250));
 }
 
-/** Pretend to apply: one step every ~0.9 s, then done. */
-export async function demoApply(plan: Plan, onLine: (line: string) => void): Promise<Report> {
+/**
+ * Pretend to apply: one step every ~0.9 s, then done. Deleting billing's
+ * feature_tax_rates_db fails on its first step, to show a plan that didn't apply.
+ */
+export async function demoApply(root: string, plan: Plan, onLine: (line: string) => void): Promise<Report> {
   const timings: Report["timings"] = [];
   for (const { index } of visibleSteps(plan)) {
     onLine("→ step");
+    if (root === "/home/dev/code/billing" && plan.kind === "delete") {
+      await new Promise((r) => setTimeout(r, 1200));
+      return {
+        outcome: {
+          status: "rolled_back",
+          step: "Drop feature_tax_rates_db",
+          error: 'database "feature_tax_rates_db" is being accessed by other users (a psql shell is still connected)',
+          undo_errors: [],
+        },
+        log: [],
+        timings,
+      };
+    }
     const seconds = 0.6 + Math.random() * 0.8;
     await new Promise((r) => setTimeout(r, seconds * 1000));
     timings.push({ step: index, seconds, detail: null });
@@ -105,6 +122,7 @@ export async function demoApply(plan: Plan, onLine: (line: string) => void): Pro
 // ------------------------------------------------------------ project view
 
 const DAY = 86400;
+const disk = { free_bytes: 41.3 * GiB, total_bytes: 58 * GiB };
 const now = () => Math.floor(Date.now() / 1000);
 
 /** Commits, newest first, one every `gapHours` from `hoursAgo`. */
@@ -138,6 +156,7 @@ function shopApi(): ProjectDetail {
     root: "/home/dev/code/shop-api", path: "~/code/shop-api", name: "shop-api", mode: "env",
     git_branch: "feature/refunds", active_db: "feature_payments_db", problem: null,
     warnings: ["merged_search_db is in the registry but not on the server (removed outside sidetrack?)"],
+    disk,
     services: [
       { name: "db", database: true, running: true },
       { name: "api", database: false, running: true },
@@ -162,7 +181,14 @@ function shopApi(): ProjectDetail {
         adopted: true,
         snapshots: [{ db_name: "app_dev__s1", seq: 1, label: "before orders split", size_bytes: 2.0 * GiB, created_at: now() - 40 * DAY, on_server: true }],
       }),
-      db("spike_cache_db", "spike/cache", "app_dev", 60, 1.9, { git_branch_exists: false }),
+      db("spike_cache_db", "spike/cache", "app_dev", 60, 1.9, {
+        git_branch_exists: false,
+        snapshots: [
+          { db_name: "spike_cache_db__s1", seq: 1, label: null, size_bytes: 1.8 * GiB, created_at: now() - 58 * DAY, on_server: true },
+          { db_name: "spike_cache_db__s2", seq: 2, label: "warm cache", size_bytes: 1.9 * GiB, created_at: now() - 55 * DAY, on_server: true },
+        ],
+      }),
+      db("old_checkout_db", "feature/old-checkout", "app_dev", 50, 1.4, { git_branch_exists: false }),
       db("merged_search_db", "feature/search", "app_dev", 45, 0, { git_branch_exists: false, on_server: false, size_bytes: null }),
       db("feature_payments_db", "feature/payments", "app_dev", 21, 2.2, { active: true }),
       db("feature_refunds_db", "feature/refunds", "feature_payments_db", 6, 2.2),
@@ -177,7 +203,7 @@ function shopApi(): ProjectDetail {
 function billing(): ProjectDetail {
   return {
     root: "/home/dev/code/billing", path: "~/code/billing", name: "billing", mode: "proxy",
-    git_branch: "fix/invoice-rounding", active_db: "app_dev", problem: null, warnings: [],
+    git_branch: "fix/invoice-rounding", active_db: "app_dev", problem: null, warnings: [], disk,
     services: [{ name: "db", database: true, running: true }, { name: "app", database: false, running: true }],
     git_branches: [
       { name: "fix/invoice-rounding", db: null, here: true, worktree: null, commits: commits("7c21aa0", ["Add rounding_mode to invoices", "Round half to even on totals"], 1) },
@@ -198,7 +224,7 @@ function analyticsEtl(): ProjectDetail {
     root: "/home/dev/code/analytics-etl", path: "~/code/analytics-etl", name: "analytics-etl", mode: "env",
     git_branch: "main", active_db: "app_dev",
     problem: "the db service isn't running; start it with `docker compose up -d db`",
-    warnings: [],
+    warnings: [], disk: null,
     services: [{ name: "db", database: true, running: false }, { name: "etl", database: false, running: false }],
     git_branches: [
       { name: "main", db: "app_dev", here: true, worktree: null, commits: commits("5e6f7a8", ["Nightly rollup of page views", "Pin pandas"], 48) },
@@ -214,7 +240,7 @@ function analyticsEtl(): ProjectDetail {
 function authService(): ProjectDetail {
   return {
     root: "/home/dev/code/auth-service", path: "~/code/auth-service", name: "auth-service", mode: "proxy",
-    git_branch: "main", active_db: "app_dev", problem: null, warnings: [],
+    git_branch: "main", active_db: "app_dev", problem: null, warnings: [], disk,
     services: [{ name: "db", database: true, running: true }, { name: "auth", database: false, running: true }],
     git_branches: [
       { name: "main", db: "app_dev", here: true, worktree: null, commits: commits("8f9e0d1", ["Rotate signing keys monthly", "Session cookie SameSite=Lax"], 4) },
@@ -242,4 +268,149 @@ export function demoDetail(root: string): Promise<ProjectDetail> {
   return new Promise((resolve, reject) =>
     setTimeout(() => (make ? resolve(make()) : reject(new Error(`no demo data for ${root}`))), 200),
   );
+}
+
+// ------------------------------------------------------------- other plans
+
+/** Fail like the planner does: the app shows the message as a plain sentence. */
+const refuse = (message: string) => Promise.reject(new Error(message));
+
+/** `naming::db_name_for_branch`, without the length and collision rules. */
+const dbName = (branch: string) => `${branch.toLowerCase().replace(/[^a-z0-9]+/g, "_")}_db`;
+
+/**
+ * A plan shaped like the planner's for `op`, from the demo project's state:
+ * proxy projects hold connections during a copy, env projects stop the app.
+ */
+export async function demoPlan(root: string, op: Op): Promise<Plan> {
+  await new Promise((r) => setTimeout(r, 300));
+  const d = details[root]?.();
+  if (!d) return refuse(`no demo data for ${root}`);
+  const proxy = d.mode === "proxy";
+  const app = d.services.filter((s) => !s.database && s.running).map((s) => s.name);
+  const active = d.db_branches.find((b) => b.active);
+  const byName = (n: string) => d.db_branches.find((b) => b.db_name === n || b.git_branch === n);
+  const pause = (db: string): Step[] => (proxy ? [{ type: "hold_connections", db }] : app.length ? [{ type: "stop_services", services: app }] : []);
+  const unpause = (db: string): Step[] => (proxy ? [{ type: "release_connections", db }] : app.length ? [{ type: "start_services", services: app }] : []);
+  const size = (n: string) => d.db_branches.flatMap((b) => [b, ...b.snapshots]).find((b) => b.db_name === n)?.size_bytes ?? 0;
+  const plan = (kind: string, summary: string, steps: Step[], warnings: string[] = [], notes: string[] = []): Plan =>
+    ({ kind, summary, steps, warnings, notes });
+
+  switch (op.op) {
+    case "switch":
+      return refuse("demo switch plans come with All projects");
+
+    case "create": {
+      const git = op.git_branch;
+      const name = dbName(git);
+      if (op.empty) {
+        return plan("create", `Create ${name} for ${git}`, [
+          { type: "create_empty_database", name },
+          { type: "register_branch", git_branch: git, db_name: name, parent_db: null },
+        ], d.warnings);
+      }
+      const base = op.from ? byName(op.from) : d.db_branches.find((b) => b.git_branch === "main");
+      if (!base) return refuse(`no DB branch, git branch or snapshot called ${op.from}`);
+      const busy = base.active;
+      return plan("create", `Create ${name} for ${git}`, [
+        ...(busy ? pause(base.db_name) : []),
+        { type: "clone_database", source: base.db_name, target: name, size_bytes: size(base.db_name) },
+        { type: "register_branch", git_branch: git, db_name: name, parent_db: base.db_name },
+        ...(busy ? unpause(base.db_name) : []),
+      ], d.warnings, [
+        op.from ? `copying ${base.db_name} as requested` : `${base.db_name} has every migration ${git} shares with main, so it's the closest base`,
+        ...(op.from ? [] : [`1 migration(s) will run when you switch to ${git}`]),
+      ]);
+    }
+
+    case "snapshot": {
+      if (!active) return refuse("can't read the active database");
+      const label = op.label;
+      if (label && d.db_branches.some((b) => b.snapshots.some((s) => s.label === label))) {
+        return refuse(`a snapshot labelled "${label}" already exists`);
+      }
+      const seq = Math.max(0, ...active.snapshots.map((s) => s.seq)) + 1;
+      const snap = `${active.db_name}__s${seq}`;
+      return plan("snapshot", `Snapshot ${active.db_name} as ${snap}`, [
+        ...pause(active.db_name),
+        { type: "clone_database", source: active.db_name, target: snap, size_bytes: size(active.db_name) },
+        { type: "freeze_database", name: snap },
+        { type: "register_snapshot", branch_db: active.db_name, db_name: snap, seq, label },
+        ...unpause(active.db_name),
+      ], d.warnings);
+    }
+
+    case "reset": {
+      if (!active) return refuse("can't read the active database");
+      const source = op.to ?? (op.parent ? active.parent : active.snapshots[0]?.db_name ?? active.parent);
+      if (!source) return refuse(`${active.db_name} has no snapshots and no parent to reset to`);
+      const tmp = `${active.db_name}__tmp`;
+      return plan("reset", `Reset ${active.db_name} to a fresh copy of ${source}`, [
+        ...pause(active.db_name),
+        { type: "clone_database", source, target: tmp, size_bytes: size(source) },
+        { type: "drop_database", name: active.db_name },
+        { type: "rename_database", from: tmp, to: active.db_name },
+        { type: "record_migrations", db_name: active.db_name },
+        ...unpause(active.db_name),
+        { type: "touch_branch", db_name: active.db_name },
+      ], d.warnings);
+    }
+
+    case "delete": {
+      const b = byName(op.name);
+      if (!b) return refuse(`no DB branch for ${op.name}`);
+      if (b.active) return refuse(`${b.db_name} is the active database; switch to another branch first`);
+      if (b.worktree) return refuse(`${b.db_name} is in use in the worktree at ${b.worktree}; switch that worktree to another branch first`);
+      return plan("delete", `Delete ${b.db_name} (git branch ${b.git_branch})`, deleteSteps(b), b.adopted ? [`${b.db_name} existed before sidetrack (it was adopted at init)`] : []);
+    }
+
+    case "rename": {
+      const b = byName(op.old);
+      if (!b) return refuse(`no DB branch for ${op.old}`);
+      const other = d.db_branches.find((o) => o.git_branch === op.new);
+      if (other) return refuse(`${op.new} already has a DB branch (${other.db_name})`);
+      const to = b.adopted ? b.db_name : dbName(op.new);
+      const route: Step[] = proxy
+        ? [{ type: "set_proxy_target", database: "app_dev", from_db: b.db_name, to_db: to }]
+        : [{ type: "rewrite_env", file: ".env", variable: "DATABASE_URL", from_db: b.db_name, to_db: to }];
+      const steps: Step[] = to === b.db_name ? [] : b.active
+        ? [...(app.length ? [{ type: "stop_services", services: app } as Step] : []), { type: "rename_database", from: b.db_name, to }, ...route, ...(app.length ? [{ type: "start_services", services: app } as Step] : [])]
+        : [{ type: "rename_database", from: b.db_name, to }];
+      return plan("rename", to === b.db_name ? `Link ${b.db_name} to git branch ${op.new} (was ${b.git_branch})` : `Rename ${b.db_name} → ${to} for git branch ${op.new}`, [
+        ...steps,
+        { type: "relink_branch", db_name: b.db_name, new_db_name: to, new_git_branch: op.new },
+      ], d.warnings, b.git_branch_exists ? [`this only renames the database; rename the git branch with \`git branch -m ${b.git_branch} ${op.new}\``] : []);
+    }
+
+    case "gc": {
+      const steps: Step[] = [];
+      const notes: string[] = [];
+      let freed = 0;
+      for (const b of d.db_branches) {
+        if (b.active) continue;
+        if (b.worktree) {
+          notes.push(`${b.db_name} is kept: it's in use in the worktree at ${b.worktree}`);
+          continue;
+        }
+        if (b.git_branch_exists && b.on_server !== false) continue;
+        notes.push(`${b.db_name} (${b.git_branch}): ${b.on_server === false ? "database is missing" : "git branch deleted"}`);
+        freed += (b.size_bytes ?? 0) + b.snapshots.reduce((n, s) => n + (s.size_bytes ?? 0), 0);
+        steps.push(...deleteSteps(b));
+      }
+      if (freed > 0) notes.push(`frees about ${bytes(freed)}`);
+      return plan("gc", "Clean up DB branches whose git branch is gone or merged", steps, [], notes);
+    }
+  }
+}
+
+/** `Planner::push_delete_branch`: snapshots first, then the branch; drops only what's on the server. */
+function deleteSteps(b: DbBranchView): Step[] {
+  return [
+    ...b.snapshots.flatMap((s): Step[] => [
+      ...(s.on_server !== false ? [{ type: "drop_database", name: s.db_name } as Step] : []),
+      { type: "forget_snapshot", db_name: s.db_name },
+    ]),
+    ...(b.on_server !== false ? [{ type: "drop_database", name: b.db_name } as Step] : []),
+    { type: "forget_branch", db_name: b.db_name },
+  ];
 }

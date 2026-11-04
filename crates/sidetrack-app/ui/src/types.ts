@@ -156,4 +156,15 @@ export interface ProjectDetail {
   db_branches: DbBranchView[];
   services: ServiceView[];
   warnings: string[];
+  disk: DiskSpace | null;
 }
+
+/** An operation to plan and apply (`ops::Op` on the Rust side), mirroring the CLI command. */
+export type Op =
+  | { op: "switch" }
+  | { op: "create"; git_branch: string; from: string | null; empty: boolean }
+  | { op: "snapshot"; label: string | null }
+  | { op: "reset"; to: string | null; parent: boolean }
+  | { op: "delete"; name: string }
+  | { op: "rename"; old: string; new: string }
+  | { op: "gc" };

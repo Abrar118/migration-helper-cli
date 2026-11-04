@@ -23,7 +23,7 @@ pub struct Overview {
 
 #[derive(Debug, Serialize)]
 pub struct ProjectView {
-    /// The main worktree's root: the registry key, and what `apply_switch` takes.
+    /// The main worktree's root: the registry key, and what `plan_op` and `apply_op` take.
     pub root: String,
     /// `root` for display, with the home directory as `~`.
     pub path: String,
@@ -84,17 +84,7 @@ fn project_view(root: &str) -> (ProjectView, Option<DiskSpace>) {
     };
     // Like the CLI: start the proxy before planning, so the plan holds
     // connections instead of stopping the app.
-    let start_failed = ws.proxy_needs_start().then(|| match sidetrack_exe() {
-        Some(exe) => ws
-            .start_proxy(&exe, None)
-            .err()
-            .map(|e| format!("couldn't start the proxy: {e:#}")),
-        None => Some(
-            "the proxy isn't running, and the `sidetrack` CLI isn't on PATH to start it; \
-             run `sidetrack proxy --daemon` in the project"
-                .to_string(),
-        ),
-    });
+    let start_failed = autostart(&ws);
     let r = &ws.cfg.routing;
     let mut view = ProjectView {
         mode: r.mode.clone(),
@@ -122,7 +112,7 @@ fn project_view(root: &str) -> (ProjectView, Option<DiskSpace>) {
         .map(|(db, wt)| (db.clone(), tilde(wt)))
         .collect();
     view.warnings = planner.reconcile();
-    view.warnings.extend(start_failed.flatten());
+    view.warnings.extend(start_failed);
     if let Some(b) = &view.git_branch {
         view.migrations = planner.migration_status(b).ok().flatten();
     }
@@ -158,6 +148,8 @@ pub struct ProjectDetail {
     pub services: Vec<ServiceView>,
     /// Registry and server disagree (never fixed automatically).
     pub warnings: Vec<String>,
+    /// Disk where the database container keeps its data.
+    pub disk: Option<DiskSpace>,
 }
 
 #[derive(Debug, Serialize)]
@@ -326,6 +318,7 @@ pub fn project_detail(root: &str) -> Result<ProjectDetail> {
             .as_ref()
             .map(|w| ws.planner(w).reconcile())
             .unwrap_or_default(),
+        disk: world.as_ref().and_then(|w| w.disk),
         root: root.to_string(),
         path: tilde(root),
         name: unreadable(root, "").name,
@@ -348,6 +341,25 @@ pub fn switch_plan(ws: &Workspace, world: &World) -> Result<Option<Plan>> {
     let mut plan = ws.planner(world).switch(&branch)?;
     ws.annotate_schema(&mut plan);
     Ok(Some(plan))
+}
+
+/// Proxy mode with autostart on: start the proxy if it isn't running.
+/// Returns why it couldn't be started; never fails.
+pub fn autostart(ws: &Workspace) -> Option<String> {
+    if !ws.proxy_needs_start() {
+        return None;
+    }
+    match sidetrack_exe() {
+        Some(exe) => ws
+            .start_proxy(&exe, None)
+            .err()
+            .map(|e| format!("couldn't start the proxy: {e:#}")),
+        None => Some(
+            "the proxy isn't running, and the `sidetrack` CLI isn't on PATH to start it; \
+             run `sidetrack proxy --daemon` in the project"
+                .to_string(),
+        ),
+    }
 }
 
 /// The sidetrack CLI, which runs the proxy: next to this app, then on PATH,
