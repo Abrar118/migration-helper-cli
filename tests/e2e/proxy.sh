@@ -17,10 +17,12 @@ mkdir -p "$proj"
 export SIDETRACK_REGISTRY="$work/registry.sqlite"
 cd "$proj"
 plog="$proj/.git/sidetrack-proxy.log"
+init_proj="$work/init_shop"
 cleanup() {
   "$st" -C "$proj" proxy --stop >/dev/null 2>&1 || true
   "$st" -C "$work/wt" proxy --stop >/dev/null 2>&1 || true
   docker compose down -v --remove-orphans >/dev/null 2>&1 || true
+  [ -d "$init_proj" ] && (cd "$init_proj" && docker compose down -v --remove-orphans >/dev/null 2>&1) || true
   rm -rf "$work"
 }
 trap cleanup EXIT
@@ -29,6 +31,44 @@ step() { printf '\n\033[1m== %s\033[0m\n' "$*"; }
 fail() { echo "FAIL: $*" >&2; [ -f "$plog" ] && cat "$plog" >&2; exit 1; }
 # psql inside the app container, through the proxy, as the app would connect.
 app_sql() { docker compose exec -T api sh -c 'psql "$DATABASE_URL" -qtAX -c "$0"' "$1"; }
+
+step "init --proxy writes the config, with the app's URL written directly in compose"
+# Alembic-shaped files are enough for detection; Alembic itself never runs here.
+mkdir -p "$init_proj/migrations/versions"
+cd "$init_proj"
+printf '[alembic]\nscript_location = migrations\n' > alembic.ini
+printf '# a1\n' > migrations/versions/a1_init.py
+cat > compose.yml <<'EOF'
+services:
+  db:
+    image: postgres:16-alpine
+    environment: { POSTGRES_USER: app, POSTGRES_PASSWORD: secret, POSTGRES_DB: app_dev }
+    healthcheck: { test: ["CMD", "pg_isready", "-U", "app"], interval: 1s, retries: 30 }
+  api:
+    image: postgres:16-alpine
+    command: ["sleep", "infinity"]
+    working_dir: /app
+    volumes: ["./:/app"]
+    environment:
+      DATABASE_URL: postgresql://app:secret@db:5432/app_dev
+    depends_on: { db: { condition: service_healthy } }
+EOF
+git init -q -b main
+git config user.email e2e@example.com
+git config user.name e2e
+git add -A
+git commit -qm "init project"
+docker compose up -d --wait db >/dev/null
+"$st" init --proxy --yes --no-hook | tee "$work/init.txt"
+grep -q "DATABASE_URL (api) in the compose file  (fine in proxy mode)" "$work/init.txt" \
+  || fail "detection should accept the URL in compose in proxy mode"
+grep -q "Linked main → app_dev" "$work/init.txt" || fail "init should adopt app_dev"
+grep -q '^mode = "proxy"$' sidetrack.toml || { cat sidetrack.toml; fail "init --proxy should write proxy mode"; }
+grep -q '^database = "app_dev"$' sidetrack.toml || { cat sidetrack.toml; fail "routing.database should be app_dev"; }
+grep -Eq '^restart = \[ ?"api" ?\]$' sidetrack.toml || { cat sidetrack.toml; fail "api should be the app service"; }
+if grep -q '^file = ' sidetrack.toml; then cat sidetrack.toml; fail "there's no env file to record"; fi
+docker compose down -v --remove-orphans >/dev/null 2>&1
+cd "$proj"
 
 step "set up a project whose app connects through the proxy"
 cp "$here/fixture/migrate.sh" .

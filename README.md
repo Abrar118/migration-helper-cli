@@ -141,7 +141,7 @@ services:
     extra_hosts: ["host.docker.internal:host-gateway"]  # needed on Linux
 ```
 
-- **Setting it up:** `sidetrack init --proxy` writes this config for you. It reads the app's database name from your env file, then tells you what to change in the app's URL (that's a one-time edit).
+- **Setting it up:** `sidetrack init --proxy` writes this config for you. It finds the app's database name in your env file, or in compose `environment:` (unlike env mode, proxy mode never has to change it there), then tells you what to change in the app's URL (that's a one-time edit). Git worktrees only get their own database when the URL is in an env file (see below).
 - **Running it:** sidetrack starts the proxy in the background when a command or the git hook needs it (`autostart = false` turns that off). You can also start it with `sidetrack proxy --daemon`, or run `sidetrack proxy` in its own terminal. Stop it with `sidetrack proxy --stop`.
 - **No restarts, even for copies:** while the proxy is running, copying the database the app is using doesn't stop the app. The proxy holds the app's new connections for the few seconds the copy takes, then lets them through to the new database. A switch then only changes where `app_dev` goes. The proxy closes the app's open connections to the old database, so its connection pool reconnects to the new one.
 - **Other databases:** connections to any other name pass through unchanged.

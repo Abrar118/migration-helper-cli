@@ -117,7 +117,8 @@ Decisions:
 20. **Plans warn when the proxy isn't running** (`World.proxy_running`). They don't refuse, because the target can be set before the proxy starts.
 
 21. **`proxy --daemon` re-runs the binary in the background.** It's a child process in its own process group, so Ctrl-C in the terminal doesn't stop it, with stdout/stderr going to `.git/sidetrack-proxy.log`. The pid goes in `.git/sidetrack-proxy.pid` once the port accepts connections. `--stop` sends `kill` to that pid. There's no fork or libc, which keeps it simple, at the cost of being Unix-only for now.
-22. **`init --proxy` never edits the app's env file.** It writes proxy-mode config, with `routing.database` read from the detected env variable, and prints the one-time URL change for the user to make.
+22. **`init --proxy` never edits the app's env file.** It writes proxy-mode config, with `routing.database` set to the detected DB name, and prints the one-time URL change for the user to make.
+    - A DB name written directly in compose `environment:` is refused in env mode, which can't rewrite it, but accepted in proxy mode (`Detection.inline`). `routing.file` / `variable` then stay empty, so worktrees can't get their own port, and init says so.
 
 23. **A running proxy holds connections instead of the app being stopped** (`HoldConnections` / `ReleaseConnections`; supersedes the restart part of decision 18).
     - The hold is a file next to the target (`.git/sidetrack-proxy-hold`: db name and expiry). A new connection that would reach that database waits until the hold is removed, then re-reads the target, so it lands on the new branch.
