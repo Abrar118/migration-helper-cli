@@ -1,5 +1,5 @@
-import type { Overview, Plan, Report } from "./types";
-import { demoApply, demoOverview } from "./demo";
+import type { Overview, Plan, ProjectDetail, Report } from "./types";
+import { demoApply, demoDetail, demoOverview } from "./demo";
 
 /** Inside the Tauri window; otherwise (plain `vite` in a browser) demo data is used. */
 export const inApp = typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
@@ -8,6 +8,13 @@ export async function loadOverview(): Promise<Overview> {
   if (!inApp) return demoOverview();
   const { invoke } = await import("@tauri-apps/api/core");
   return invoke<Overview>("overview");
+}
+
+/** One project's git branches, DB branch tree, containers and recent commits. */
+export async function loadDetail(root: string): Promise<ProjectDetail> {
+  if (!inApp) return demoDetail(root);
+  const { invoke } = await import("@tauri-apps/api/core");
+  return invoke<ProjectDetail>("project_detail", { root });
 }
 
 /**

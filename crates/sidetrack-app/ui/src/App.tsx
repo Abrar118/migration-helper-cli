@@ -3,6 +3,7 @@ import { inApp, loadOverview } from "./api";
 import { gb } from "./format";
 import { Proof } from "./Proof";
 import { ProjectList } from "./ProjectList";
+import { ProjectPage } from "./ProjectPage";
 import { EmptySheet, InSyncSheet, LoadErrorSheet, ProblemSheet } from "./Sheets";
 import { createsDatabase, target } from "./steps";
 import { applyTheme, loadTheme, type Theme } from "./theme";
@@ -17,6 +18,8 @@ export function App() {
   const [selected, setSelected] = useState<string | null>(null);
   const [view, setView] = useState<View>("projects");
   const [theme, setTheme] = useState<Theme>(loadTheme);
+  // The project open in the project view, if any.
+  const [open, setOpen] = useState<string | null>(null);
   // A proof being applied (or just applied) stays on screen until it's closed,
   // even if a refresh replaces the project's plan.
   const [pinned, setPinned] = useState<{ root: string; plan: Plan } | null>(null);
@@ -63,21 +66,46 @@ export function App() {
     return () => window.removeEventListener("focus", onFocus);
   }, [refresh]);
 
+  const back = useCallback(() => {
+    setOpen(null);
+    refresh();
+  }, [refresh]);
+
   const projects = overview?.projects ?? [];
   const project = projects.find((p) => p.root === selected) ?? null;
   const disk = overview?.disk ?? null;
 
+  const top = (
+    <>
+      <div className="top">
+        <span className="mark">sidetrack</span>
+        <nav className="nav" aria-label="Main">
+          <button aria-current={view === "projects" ? "page" : undefined} onClick={() => setView("projects")}>Projects</button>
+          <button aria-current={view === "settings" ? "page" : undefined} onClick={() => setView("settings")}>Settings</button>
+        </nav>
+      </div>
+      {!inApp && <p className="demo">Demo data. Open the sidetrack app to see your projects.</p>}
+    </>
+  );
+
+  if (open && view === "projects") {
+    return (
+      <div className="app">
+        <ProjectPage
+          key={open}
+          root={open}
+          top={top}
+          planWaiting={Boolean(projects.find((p) => p.root === open)?.plan)}
+          onBack={back}
+        />
+      </div>
+    );
+  }
+
   return (
     <div className="app">
       <aside className="col">
-        <div className="top">
-          <span className="mark">sidetrack</span>
-          <nav className="nav" aria-label="Main">
-            <button aria-current={view === "projects" ? "page" : undefined} onClick={() => setView("projects")}>Projects</button>
-            <button aria-current={view === "settings" ? "page" : undefined} onClick={() => setView("settings")}>Settings</button>
-          </nav>
-        </div>
-        {!inApp && <p className="demo">Demo data. Open the sidetrack app to see your projects.</p>}
+        {top}
         <h1>All projects</h1>
         {overview === null && !loadError ? (
           <p className="loading">Reading your projects…</p>
@@ -108,6 +136,11 @@ export function App() {
               <p>{project ? lead(project, pinned?.root === project.root) : loadError ? "Something went wrong" : projects.length === 0 && overview ? "Set up a project" : " "}</p>
               <div className="lead-side">
                 {project && <span className="where">{where(project)}</span>}
+                {project && (
+                  <button className="text-button" onClick={() => setOpen(project.root)} disabled={pinned !== null}>
+                    Open project
+                  </button>
+                )}
                 <button className="text-button" onClick={refresh} disabled={loading || pinned !== null}>
                   {loading ? "Reading…" : "Refresh"}
                 </button>

@@ -171,6 +171,8 @@ Detected migration tools: Alembic, Django, Prisma, Rails, Flyway and Knex. Anyth
 - **Same plan:** before it runs, the plan is built again, and nothing runs if it no longer matches the one on screen.
 - **Destructive plans:** these need an explicit confirmation.
 
+**Open project** shows one project as two linked panes: its git branches on the left (with their last few commits and the worktree each is checked out in), and its database branches on the right as a parent → child tree, with snapshots and which worktree uses each database. Selecting a branch on one side selects its partner on the other. Git branches with no database yet, and databases whose git branch is gone, are marked as such. The foot of the column shows whether the database and app containers are running. This view is read-only.
+
 ```bash
 cd crates/sidetrack-app
 npm install

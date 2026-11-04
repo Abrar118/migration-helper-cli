@@ -13,13 +13,20 @@ use sidetrack_core::plan::Plan;
 use sidetrack_core::workspace::Workspace;
 use tauri::{AppHandle, Emitter};
 
-use crate::views::Overview;
+use crate::views::{Overview, ProjectDetail};
 
 /// Every registered project with its current state and, when it's out of sync,
 /// the switch plan for its checked-out branch.
 #[tauri::command]
 async fn overview() -> Result<Overview, String> {
     blocking(views::overview).await
+}
+
+/// One project's git branches, DB branch tree, snapshots, worktrees,
+/// containers and recent commits. Read-only.
+#[tauri::command]
+async fn project_detail(root: String) -> Result<ProjectDetail, String> {
+    blocking(move || views::project_detail(&root)).await
 }
 
 /// Apply the switch plan the user was shown for the project at `root`.
@@ -65,7 +72,11 @@ async fn blocking<T: Send + 'static>(
 
 fn main() {
     tauri::Builder::default()
-        .invoke_handler(tauri::generate_handler![overview, apply_switch])
+        .invoke_handler(tauri::generate_handler![
+            overview,
+            project_detail,
+            apply_switch
+        ])
         .run(tauri::generate_context!())
         .expect("error while running the sidetrack app");
 }

@@ -2,10 +2,12 @@
 //! unchanged (their JSON format is the stable contract); the rest is a summary
 //! of `World` per project.
 
+use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 use anyhow::Result;
 use serde::Serialize;
+use sidetrack_core::git::Commit;
 use sidetrack_core::plan::Plan;
 use sidetrack_core::planner::{DiskSpace, MigrationStatus, World};
 use sidetrack_core::registry::{self, Registry};
@@ -130,6 +132,211 @@ fn project_view(root: &str) -> (ProjectView, Option<DiskSpace>) {
         Err(e) => view.problem = Some(format!("{e:#}")),
     }
     (view, world.disk)
+}
+
+/// How many commits the project view shows per git branch.
+const COMMITS_PER_BRANCH: usize = 5;
+
+/// One project's git branches and DB branches, side by side.
+#[derive(Debug, Serialize)]
+pub struct ProjectDetail {
+    pub root: String,
+    pub path: String,
+    pub name: String,
+    pub mode: String,
+    /// The branch checked out in the main worktree.
+    pub git_branch: Option<String>,
+    pub active_db: Option<String>,
+    /// Why the server couldn't be read. The registry and git parts are still
+    /// filled, and `on_server` / `size_bytes` are unknown.
+    pub problem: Option<String>,
+    /// Checked out here first, then the most recently committed to.
+    pub git_branches: Vec<GitBranchView>,
+    /// Oldest first; `parent` links them into a tree.
+    pub db_branches: Vec<DbBranchView>,
+    /// The database service, then the app services sidetrack restarts.
+    pub services: Vec<ServiceView>,
+    /// Registry and server disagree (never fixed automatically).
+    pub warnings: Vec<String>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct GitBranchView {
+    pub name: String,
+    /// Its DB branch, if it has one.
+    pub db: Option<String>,
+    /// Checked out in the main worktree.
+    pub here: bool,
+    /// Checked out in another worktree: that worktree's path.
+    pub worktree: Option<String>,
+    pub commits: Vec<Commit>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct DbBranchView {
+    pub db_name: String,
+    pub git_branch: String,
+    /// The DB branch it was copied from.
+    pub parent: Option<String>,
+    pub git_branch_exists: bool,
+    /// `None` when the server couldn't be read.
+    pub on_server: Option<bool>,
+    pub size_bytes: Option<u64>,
+    pub adopted: bool,
+    pub created_at: i64,
+    pub last_used_at: i64,
+    /// The app in the main worktree uses it.
+    pub active: bool,
+    /// Another worktree's app uses it: that worktree's path.
+    pub worktree: Option<String>,
+    /// Oldest first.
+    pub snapshots: Vec<SnapshotView>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct SnapshotView {
+    pub db_name: String,
+    pub seq: i64,
+    pub label: Option<String>,
+    pub size_bytes: Option<u64>,
+    pub created_at: i64,
+    pub on_server: Option<bool>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct ServiceView {
+    pub name: String,
+    pub database: bool,
+    /// `None` when Docker couldn't be asked.
+    pub running: Option<bool>,
+}
+
+pub fn project_detail(root: &str) -> Result<ProjectDetail> {
+    let ws = Workspace::open(Path::new(root))?;
+    let project = ws.project()?;
+    let git_branch = ws.git.current_branch()?;
+    let active_db = ws.active_db().ok().flatten();
+    // Without Docker or the database, the registry and git still say a lot.
+    let (world, problem) = match ws.world() {
+        Ok(w) => (Some(w), None),
+        Err(e) => (None, Some(format!("{e:#}"))),
+    };
+    let (branches, snapshots, elsewhere) = match &world {
+        Some(w) => (w.branches.clone(), w.snapshots.clone(), w.elsewhere.clone()),
+        None => (
+            ws.reg.branches(project.id)?,
+            ws.reg.snapshots(project.id)?,
+            ws.active_elsewhere(),
+        ),
+    };
+    let server = world.as_ref().map(|w| &w.server_dbs);
+    let on_server = |db: &str| server.map(|s| s.contains_key(db));
+    let size = |db: &str| server.and_then(|s| s.get(db)).map(|d| d.size_bytes);
+
+    let local = ws.git.local_branches()?;
+    // (branch → path) for the other worktrees; the first entry is this one.
+    let checked_out: BTreeMap<String, String> = ws
+        .git
+        .worktrees()
+        .unwrap_or_default()
+        .into_iter()
+        .skip(1)
+        .filter_map(|(path, b)| Some((b?, tilde(&path.to_string_lossy()))))
+        .collect();
+    let mut git_branches: Vec<GitBranchView> = local
+        .iter()
+        .map(|name| GitBranchView {
+            name: name.clone(),
+            db: branches
+                .iter()
+                .find(|b| &b.git_branch == name)
+                .map(|b| b.db_name.clone()),
+            here: git_branch.as_ref() == Some(name),
+            worktree: checked_out.get(name).cloned(),
+            commits: ws
+                .git
+                .log(&format!("refs/heads/{name}"), COMMITS_PER_BRANCH)
+                .unwrap_or_default(),
+        })
+        .collect();
+    git_branches.sort_by_key(|b| {
+        let newest = b.commits.first().map_or(0, |c| c.time);
+        (!b.here, std::cmp::Reverse(newest))
+    });
+
+    let mut db_branches: Vec<DbBranchView> = branches
+        .iter()
+        .map(|b| DbBranchView {
+            db_name: b.db_name.clone(),
+            git_branch: b.git_branch.clone(),
+            parent: b
+                .parent_id
+                .and_then(|id| branches.iter().find(|p| p.id == id))
+                .map(|p| p.db_name.clone()),
+            git_branch_exists: local.contains(&b.git_branch),
+            on_server: on_server(&b.db_name),
+            size_bytes: size(&b.db_name),
+            adopted: b.adopted,
+            created_at: b.created_at,
+            last_used_at: b.last_used_at,
+            active: active_db.as_deref() == Some(b.db_name.as_str()),
+            worktree: elsewhere.get(&b.db_name).map(|p| tilde(p)),
+            snapshots: snapshots
+                .iter()
+                .filter(|s| s.branch_id == b.id)
+                .map(|s| SnapshotView {
+                    db_name: s.db_name.clone(),
+                    seq: s.seq,
+                    label: s.label.clone(),
+                    size_bytes: s.size_bytes.or_else(|| size(&s.db_name)),
+                    created_at: s.created_at,
+                    on_server: on_server(&s.db_name),
+                })
+                .collect(),
+        })
+        .collect();
+    db_branches.sort_by_key(|b| b.created_at);
+
+    // `root` is the main worktree, so its compose runs the database too.
+    let running = match &world {
+        Some(w) => Some(w.running_services.clone()),
+        None => ws.compose.running_services().ok(),
+    };
+    let db_service = &ws.cfg.database.service;
+    let mut names = vec![db_service.clone()];
+    names.extend(
+        ws.cfg
+            .routing
+            .restart
+            .iter()
+            .filter(|s| *s != db_service)
+            .cloned(),
+    );
+    let services = names
+        .into_iter()
+        .map(|name| ServiceView {
+            running: running.as_ref().map(|r| r.contains(&name)),
+            database: &name == db_service,
+            name,
+        })
+        .collect();
+
+    Ok(ProjectDetail {
+        warnings: world
+            .as_ref()
+            .map(|w| ws.planner(w).reconcile())
+            .unwrap_or_default(),
+        root: root.to_string(),
+        path: tilde(root),
+        name: unreadable(root, "").name,
+        mode: ws.cfg.routing.mode.clone(),
+        git_branch,
+        active_db,
+        problem,
+        git_branches,
+        db_branches,
+        services,
+    })
 }
 
 /// The plan `sidetrack switch` would show for the checked-out branch, with its

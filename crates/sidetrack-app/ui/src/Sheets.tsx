@@ -2,7 +2,7 @@ import type { ReactNode } from "react";
 import { Code, sentence, Slug } from "./text";
 import type { ProjectView } from "./types";
 
-function Sheet({ label, children }: { label: string; children: ReactNode }) {
+export function Sheet({ label, children }: { label: string; children: ReactNode }) {
   return (
     <section className="sheet plain" aria-label={label}>
       <i className="crop tl" /><i className="crop tr" /><i className="crop bl" /><i className="crop br" />
@@ -82,7 +82,7 @@ export function LoadErrorSheet({ message }: { message: string }) {
   );
 }
 
-function Queries({ warnings }: { warnings: string[] }) {
+export function Queries({ warnings }: { warnings: string[] }) {
   if (warnings.length === 0) return null;
   return (
     <div className="queries">

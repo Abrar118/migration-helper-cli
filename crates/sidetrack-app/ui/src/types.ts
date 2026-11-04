@@ -97,3 +97,63 @@ export interface Report {
   log: string[];
   timings: { step: number; seconds: number; detail: string | null }[];
 }
+
+export interface Commit {
+  id: string;
+  subject: string;
+  /** Unix seconds. */
+  time: number;
+}
+
+export interface GitBranchView {
+  name: string;
+  db: string | null;
+  here: boolean;
+  worktree: string | null;
+  commits: Commit[];
+}
+
+export interface SnapshotView {
+  db_name: string;
+  seq: number;
+  label: string | null;
+  size_bytes: number | null;
+  created_at: number;
+  on_server: boolean | null;
+}
+
+export interface DbBranchView {
+  db_name: string;
+  git_branch: string;
+  parent: string | null;
+  git_branch_exists: boolean;
+  on_server: boolean | null;
+  size_bytes: number | null;
+  adopted: boolean;
+  created_at: number;
+  last_used_at: number;
+  active: boolean;
+  worktree: string | null;
+  snapshots: SnapshotView[];
+}
+
+export interface ServiceView {
+  name: string;
+  database: boolean;
+  running: boolean | null;
+}
+
+/** One project's git branches and DB branches (`project_detail`). */
+export interface ProjectDetail {
+  root: string;
+  path: string;
+  name: string;
+  mode: string;
+  git_branch: string | null;
+  active_db: string | null;
+  problem: string | null;
+  git_branches: GitBranchView[];
+  db_branches: DbBranchView[];
+  services: ServiceView[];
+  warnings: string[];
+}

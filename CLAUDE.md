@@ -49,7 +49,8 @@ Three crates:
 - **`crates/sidetrack-core`** holds all logic and does no terminal I/O.
 - **`crates/sidetrack`** is a thin layer: clap commands (`main.rs`), prompts and approval (`ui.rs`), and the git hook (`hook.rs`).
 - **`crates/sidetrack-app`** is the Tauri 2 desktop app (v1.5).
-  - **Rust side:** `src/main.rs` (commands) and `src/views.rs` (per-project summary). It drives the core like the CLI does.
+  - **Rust side:** `src/main.rs` (commands) and `src/views.rs` (per-project summary, and `project_detail` for the project view). It drives the core like the CLI does.
+  - **Project view** (`ui/src/ProjectPage.tsx`, read-only): git branches in the column (with `Git::log` commits), the DB branch tree on the sheet, linked by selection. Without Docker or the database it still shows the registry and git, with server facts unknown.
   - **Frontend:** React + Vite + TS in `ui/`.
   - **Not a default workspace member:** it needs WebKitGTK and a built frontend, so build it with `cargo build -p sidetrack-app`. CI checks it in its own job.
   - **Same plan only:** `apply_switch` builds the plan again and refuses if it differs from the one shown.

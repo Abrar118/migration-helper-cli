@@ -264,6 +264,11 @@ Projects and Settings as plain 15px text in soft ink. Hover goes key; the curren
 ### Project rows
 Full-width buttons on paper, separated by 1px rules: a 24px semibold name and one 15px soft sentence of state ("feature/refunds will use feature_refunds_db · plan ready"). A row that can't be read sets its state in key at 600. Hover takes the table tone. The selected row is solid key with paper text, inverted at night. Arrow keys move the selection.
 
+### Project view: git rows and the DB branch tree
+The column becomes the project: "Back to all projects", the project name as the headline, then git branch rows (the name in Courier at 19px, one soft sentence of state; "No database yet" in key at 600). The selected row is solid key and opens its last commits underneath: subject on one line, Courier id and age below, between 1px rules. The column foot lists containers: a 10px key square, filled when running, empty when stopped, rule-grey when unknown, with "Stopped" in key at 600.
+
+The sheet holds the DB branch tree: nodes with the Courier name at about 20px, size on the right, and one 15px soft sentence where facts that need a look ("the app uses it", "used in <worktree>", "its git branch is gone", "not on the server") are set in key at 600. Children hang off 1px key rules with a 12px tick, drawn like crop marks; separate roots are split by a 1px rule. Snapshots are 14px soft lines under their branch. Selection is shared: a git row and its DB node are selected together, both solid key; arrow keys move through either list. No process inks: they stay for step families.
+
 ### Proof sheet with crop marks
 A paper sheet with four corner crop marks, holding in order: colour bar, title, step list, records line, Query notes, facts, then the footer with the slug line and sign-off box. Non-plan sheets (in sync, problem, empty, load error) use the same paper and crop marks without the bar or sign-off.
 

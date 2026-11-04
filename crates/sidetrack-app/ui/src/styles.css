@@ -266,6 +266,64 @@ code, .nw { white-space: nowrap; }
 .sheet.plain .note + .note { margin-top: 8px; }
 .problem-text { font-size: 22px; max-width: 60ch; margin-bottom: 18px; }
 
+/* ------------------------------------------------------------ project view */
+
+/* The column holds the project's git branches; the sheet its DB branch tree. */
+.back { padding: 22px 28px 0; }
+.col h1.project-title { margin-top: 14px; overflow-wrap: anywhere; }
+.lead > p { min-width: 0; overflow-wrap: anywhere; }
+.lead > p .db { font-weight: 400; }
+
+.git-row .name.db { font-size: 19px; font-weight: 400; letter-spacing: 0; line-height: 1.3; }
+.git-row .state .db { overflow-wrap: anywhere; }
+
+/* The selected branch's recent commits, under its row. */
+.commits { padding: 14px 28px 16px; }
+.commits h3, .containers h3 { font-size: 15px; font-weight: 600; color: var(--soft); margin-bottom: 6px; }
+.commits ol { list-style: none; padding: 0; }
+.commits li { padding: 5px 0 6px; border-top: 1px solid var(--rule); line-height: 1.35; }
+.commits .subject { display: block; font-size: 15px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.commit-meta { display: block; font-size: 14px; color: var(--soft); }
+
+/* Container status at the foot of the column: a filled square runs, an empty one doesn't. */
+.containers ul { list-style: none; padding: 0; display: grid; gap: 4px; }
+.containers li { display: flex; align-items: baseline; gap: 10px; font-size: 17px; }
+.containers li i { flex: none; width: 10px; height: 10px; border: 1px solid var(--ink); align-self: center; }
+.containers li[data-running="true"] i { background: var(--ink); }
+.containers li[data-running="unknown"] i { border-color: var(--rule); }
+.svc-state { margin-left: auto; font-size: 15px; color: var(--soft); text-align: right; }
+.containers li[data-running="false"] .svc-state { color: var(--ink); font-weight: 600; }
+
+/* The DB branch tree: children hang off 1px key rules, like crop marks. */
+.tree { list-style: none; padding: 0; margin-top: 18px; max-width: 980px; }
+.tree > li + li { border-top: 1px solid var(--rule); margin-top: 8px; padding-top: 8px; }
+.tree .children { list-style: none; padding: 0 0 0 32px; }
+.tree .children > li { position: relative; }
+.tree .children > li::before { content: ""; position: absolute; left: -16px; top: 0; bottom: 0; border-left: 1px solid var(--ink); }
+.tree .children > li:last-child::before { bottom: auto; height: 26px; }
+.tree .children > li::after { content: ""; position: absolute; left: -16px; top: 26px; width: 12px; border-top: 1px solid var(--ink); }
+
+.node { display: block; width: 100%; text-align: left; background: none; border: 0; padding: 10px 16px 12px; }
+.node:hover { background: var(--table); }
+.node-head { display: flex; align-items: baseline; justify-content: space-between; gap: 16px; font-size: 21px; line-height: 1.3; }
+.node-name { min-width: 0; overflow-wrap: anywhere; }
+.node-size { flex: none; font-size: 15px; color: var(--soft); }
+.node-state { display: block; font-size: 15px; color: var(--soft); margin-top: 3px; }
+.node-state strong, .snaps strong { color: var(--ink); font-weight: 600; }
+.node-state .db { overflow-wrap: anywhere; }
+.node[aria-current="true"] { background: var(--ink); color: var(--paper); }
+.node[aria-current="true"] .node-size,
+.node[aria-current="true"] .node-state,
+.node[aria-current="true"] .node-state strong { color: var(--paper); }
+.node[aria-current="true"]:focus-visible { outline-color: var(--paper); outline-offset: -6px; }
+
+.snaps { list-style: none; padding: 2px 16px 8px; font-size: 14px; color: var(--soft); }
+.snaps li { padding: 2px 0; overflow-wrap: anywhere; }
+.snap-name { font-weight: 600; color: var(--ink); }
+
+.tree-empty { margin-top: 12px; }
+.slug.tree-slug { margin: 28px 0 0; }
+
 /* ---------------------------------------------------------------- settings */
 
 .settings { max-width: 720px; }
