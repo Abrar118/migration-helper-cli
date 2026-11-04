@@ -15,8 +15,8 @@ Last updated 2026-11-04. Read `CLAUDE.md` first, then this.
 | Git worktrees (spec P2) | merged (PR #8) |
 | Worktree edges: env-file port wiring, env-mode warning, removal checks | merged (PR #9) |
 | `init --proxy` accepts a DB name written in compose, plus an e2e check; Windows path fixes | merged (PR #10) |
-
-Nothing is in flight. The next item is the Tauri desktop app (see "Later, per the spec").
+| Handoff update after PR #10 | merged (PR #11) |
+| **Desktop app, first surface: All projects, plan proofs, Apply** | **branch `feat/desktop-app`.** Merge it before starting new work. |
 
 `main` is protected. Every PR needs one approval, including a code-owner review (`@Abrar118`). The owner can bypass the rules. Force-pushes and deletion are blocked.
 
@@ -71,13 +71,37 @@ See plan-v1.md, "Local proxy (v2)", decisions 17–25.
 
 **Copy speed on the Mac (Docker Desktop).** Run `sidetrack bench` against a real ~2 GB project database and note the time. Linux numbers are in `plan-v1.md`: FILE_COPY took 3.9 s (13 s right after loading), WAL_LOG 11.9 s. The owner plans to run this later (as of 2026-11-04).
 
+## Desktop app (v1.5, in progress)
+
+`crates/sidetrack-app`: Tauri 2, React + Vite + TS. `PRODUCT.md` holds the product context.
+
+**Design:**
+- **Visual system:** "Press Proof". Every plan is drawn as a press proof: crop marks, a colour bar with one patch per step, a slug line, and an "OK to apply" sign-off box.
+- **Where it's recorded:** the direction contract is in `.impeccable/surfaces/` and the tokens are in `DESIGN.md`. Read both before changing the UI.
+- **How it was chosen:** with the Impeccable skill, over two rounds. The first round was rejected as generic.
+
+**Built (`feat/desktop-app`):**
+- **All projects (home):** every registered project read in parallel, the switch plan for the checked-out branch drawn as a proof, and Apply.
+  - **Same plan only:** `apply_switch` builds the plan again and refuses if it differs from the one shown.
+  - **Live progress:** the colour bar fills as `Applier` progress lines arrive.
+- **States:** in sync, can't read, no projects, settings.
+- **Themes:** light and dark.
+- **Demo data:** `npm run dev` runs the UI alone with labelled demo data.
+- **Finish review:** passed with verdict `ship` after two fix rounds.
+
+**Not built yet, in rough order:**
+- **Project view:** the two linked panes the user chose, git branches on the left and the DB branch tree (parent → child) on the right, with snapshots, worktrees, container status and commit history per branch.
+- **Plans for other operations:** create, snapshot, reset, delete, rename, gc.
+  - `Proof.tsx` already handles destructive plans: spot red, a confirm checkbox, the sign-off in spot.
+  - Nothing has rendered or reviewed that path yet, because a switch never drops anything.
+- **Starting the proxy automatically:** the app doesn't do it before planning, unlike the CLI (`autostart_proxy` lives in the CLI crate). In proxy mode with the proxy down, the app's plans stop the app instead of holding connections. Moving the start logic into the core would fix that.
+- **Design ceiling items from the finish review:** the in-sync, problem and settings sheets don't use the proof devices (colour bar, sign-off), and there's no registration target or tint ramp.
+- **Not run against real projects:** the app has only been run against demo data (no Docker on the build machine). `npm run tauri dev` against a real registry still needs a first run.
+- **Approval requests from the git hook** (v2).
+
+**Core gap found on the way:** `Workspace::annotate_schema` only looks at `RewriteEnv` steps, so proxy-mode switches never get a schema summary.
+
 ## Later, per the spec
 
-- **Tauri desktop app (v1.5).** It's the next big item. The plan:
-  - a `crates/sidetrack-app` Tauri 2 crate that calls `sidetrack-core` directly (`Workspace::world`, `Planner`, `Applier`), the same way the CLI does;
-  - views from the spec: a git branch map, a DB branch tree (parent → child), container status, commit history per branch, and plan / schema diff previews with Apply;
-  - prompts from the git hook could go to the app instead of the terminal ("Tauri approvals").
-  - Build it on a desktop machine. It needs a GUI to check, and it's frontend-heavy.
 - MySQL/MariaDB engine. That's when a shared engine trait gets introduced, not before. The proxy would need a MySQL handshake rewrite too, since the database name is in the HandshakeResponse.
 - Then SQL Server, Oracle and others, one at a time.
-- Approving plans from the desktop app.

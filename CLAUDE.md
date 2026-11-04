@@ -30,6 +30,13 @@ tests/e2e/run.sh
 tests/e2e/alembic.sh   # real Alembic; needs `pip install alembic "psycopg[binary]"`
 tests/e2e/proxy.sh     # routing.mode = "proxy" with `sidetrack proxy` running
 
+# Desktop app (crates/sidetrack-app):
+cd crates/sidetrack-app && npm install
+npm run build                                # type-check + build the UI (needed before clippy)
+cargo clippy -p sidetrack-app --all-targets -- -D warnings
+npm run tauri dev                            # run the app against the real registry
+npm run dev                                  # UI only, in a browser, with demo data
+
 # Running the CLI by hand against some project:
 SIDETRACK_REGISTRY=/tmp/st.sqlite cargo run -p sidetrack -- -C /path/to/project status
 ```
@@ -38,9 +45,16 @@ SIDETRACK_REGISTRY=/tmp/st.sqlite cargo run -p sidetrack -- -C /path/to/project 
 
 ## Architecture
 
-Two crates:
-- **`crates/sidetrack-core`** holds all logic and does no terminal I/O. A planned Tauri desktop app (v1.5) will reuse it.
+Three crates:
+- **`crates/sidetrack-core`** holds all logic and does no terminal I/O.
 - **`crates/sidetrack`** is a thin layer: clap commands (`main.rs`), prompts and approval (`ui.rs`), and the git hook (`hook.rs`).
+- **`crates/sidetrack-app`** is the Tauri 2 desktop app (v1.5).
+  - **Rust side:** `src/main.rs` (commands) and `src/views.rs` (per-project summary). It drives the core like the CLI does.
+  - **Frontend:** React + Vite + TS in `ui/`.
+  - **Not a default workspace member:** it needs WebKitGTK and a built frontend, so build it with `cargo build -p sidetrack-app`. CI checks it in its own job.
+  - **Same plan only:** `apply_switch` builds the plan again and refuses if it differs from the one shown.
+  - **Visual system:** "Press Proof". Read `.impeccable/surfaces/*.md` (the direction contract) and `DESIGN.md` before changing the UI.
+  - **Demo data:** `npm run dev` runs the UI alone with labelled demo data (`ui/src/demo.ts`).
 
 Every command follows the same pipeline:
 

@@ -1,0 +1,160 @@
+{
+  "schemaVersion": 2,
+  "generatedAt": "2026-11-04T00:00:00Z",
+  "title": "Design System: sidetrack",
+  "extensions": {
+    "colorMeta": {
+      "light-table": { "role": "neutral", "displayName": "Light Table", "canonical": "#ededed", "tonalRamp": ["#262626", "#3d3d3d", "#575757", "#737373", "#949494", "#b5b5b5", "#d6d6d6", "#ededed"] },
+      "paper": { "role": "neutral", "displayName": "Paper", "canonical": "#ffffff", "tonalRamp": ["#262626", "#404040", "#5c5c5c", "#7a7a7a", "#9c9c9c", "#bfbfbf", "#e0e0e0", "#ffffff"] },
+      "key-black": { "role": "primary", "displayName": "Key Black", "canonical": "#1a1a1a", "tonalRamp": ["#1a1a1a", "#333333", "#4d4d4d", "#666666", "#808080", "#a6a6a6", "#cccccc", "#f0f0ee"] },
+      "soft-ink": { "role": "neutral", "displayName": "Soft Ink", "canonical": "#5e5e5e", "tonalRamp": ["#1f1f1f", "#333333", "#474747", "#5e5e5e", "#7a7a7a", "#999999", "#bdbdbd", "#e3e3e3"] },
+      "rule-grey": { "role": "neutral", "displayName": "Rule Grey", "canonical": "#d4d4d4", "tonalRamp": ["#262626", "#3d3d3d", "#575757", "#737373", "#949494", "#b3b3b3", "#d4d4d4", "#ededed"] },
+      "process-cyan": { "role": "secondary", "displayName": "Process Cyan", "canonical": "#00a0e0", "tonalRamp": ["#00243a", "#003c5e", "#005a87", "#0079b0", "#00a0e0", "#4dbfeb", "#99daf4", "#d6f0fb"] },
+      "process-magenta": { "role": "secondary", "displayName": "Process Magenta", "canonical": "#e5007d", "tonalRamp": ["#3a0020", "#5e0034", "#87004a", "#b00061", "#e5007d", "#ee4da2", "#f599c9", "#fbd6ea"] },
+      "process-yellow": { "role": "secondary", "displayName": "Process Yellow", "canonical": "#ffe600", "tonalRamp": ["#3a3400", "#5e5400", "#877800", "#b09d00", "#e0c800", "#ffe600", "#fff080", "#fffad1"] },
+      "spot-red": { "role": "tertiary", "displayName": "Spot Red", "canonical": "#e10600", "tonalRamp": ["#3a0200", "#5e0300", "#870400", "#b00500", "#e10600", "#ec5550", "#f5a19e", "#fbdcdb"] },
+      "on-light-ink": { "role": "neutral", "displayName": "On-Light Ink", "canonical": "#1a1a1a", "tonalRamp": ["#1a1a1a", "#333333", "#4d4d4d", "#666666", "#808080", "#a6a6a6", "#cccccc", "#f0f0ee"] },
+      "on-strong-ink": { "role": "neutral", "displayName": "On-Strong Ink", "canonical": "#ffffff", "tonalRamp": ["#262626", "#404040", "#5c5c5c", "#7a7a7a", "#9c9c9c", "#bfbfbf", "#e0e0e0", "#ffffff"] },
+      "light-table-night": { "role": "neutral", "displayName": "Light Table at Night", "canonical": "#121212", "tonalRamp": ["#121212", "#1c1c1c", "#262626", "#333333", "#474747", "#5e5e5e", "#7a7a7a", "#a6a6a6"] },
+      "paper-night": { "role": "neutral", "displayName": "Paper at Night", "canonical": "#1c1c1c", "tonalRamp": ["#121212", "#1c1c1c", "#262626", "#333333", "#474747", "#5e5e5e", "#7a7a7a", "#a6a6a6"] },
+      "key-night": { "role": "primary", "displayName": "Key at Night", "canonical": "#f0f0ee", "tonalRamp": ["#262625", "#3d3d3c", "#575756", "#737372", "#949493", "#b5b5b3", "#d6d6d4", "#f0f0ee"] },
+      "soft-ink-night": { "role": "neutral", "displayName": "Soft Ink at Night", "canonical": "#a6a6a6", "tonalRamp": ["#262626", "#3d3d3d", "#575757", "#737373", "#8c8c8c", "#a6a6a6", "#c4c4c4", "#e3e3e3"] },
+      "rule-night": { "role": "neutral", "displayName": "Rule at Night", "canonical": "#333333", "tonalRamp": ["#121212", "#1f1f1f", "#2a2a2a", "#333333", "#474747", "#5e5e5e", "#7a7a7a", "#a6a6a6"] }
+    },
+    "typographyMeta": {
+      "figure": { "displayName": "Figure", "purpose": "The disk fact on a proof: before → after, with a 22px unit." },
+      "display": { "displayName": "Display", "purpose": "Sheet titles and the Settings title; 36px in windows under 820px tall." },
+      "patch-numeral": { "displayName": "Patch numeral", "purpose": "Step numbers on the colour bar; 36px below 1280px wide or 820px tall." },
+      "column-figure": { "displayName": "Column figure", "purpose": "Disk free at the foot of the project column, with an 18px unit." },
+      "headline": { "displayName": "Headline", "purpose": "\"All projects\" at the head of the column." },
+      "row-title": { "displayName": "Row title", "purpose": "Project names in the column." },
+      "title": { "displayName": "Title", "purpose": "The lead line above a sheet, fact values, the sign-off heading (at 700)." },
+      "step": { "displayName": "Step", "purpose": "Step sentences, button labels (at 600), theme names." },
+      "body": { "displayName": "Body", "purpose": "The base size, with tabular numerals." },
+      "label": { "displayName": "Label", "purpose": "Sentence-case soft labels above values; never tracked caps." },
+      "note": { "displayName": "Note", "purpose": "The records line and the demo notice." },
+      "identifier": { "displayName": "Identifier", "purpose": "Database names, commands and paths, at 0.94em of the surrounding text." },
+      "slug": { "displayName": "Slug", "purpose": "The typed slug line under a 1px key rule; 14px when it stands alone." }
+    },
+    "shadows": [
+      { "name": "none", "value": "none", "purpose": "The system is flat; sheets separate from the table by tone and crop marks." }
+    ],
+    "motion": [
+      { "name": "ease-out", "value": "cubic-bezier(0.16, 1, 0.3, 1)", "purpose": "The one easing curve for ink, text colour and button state." },
+      { "name": "ink-wipe", "value": "clip-path inset(0 100% 0 0) → inset(0 0 0 0), 700ms ease-out", "purpose": "A patch's ink laid down left to right when its step completes." },
+      { "name": "ink-laying", "value": "keyframes laying: inset(0 100% 0 0) → inset(0 22% 0 0), 9s ease-out, forwards", "purpose": "The running patch inks toward 78% and holds until the step finishes." },
+      { "name": "patch-text", "value": "color 300ms ease-out", "purpose": "Patch numeral and label switch to the ink's foreground as it lands." },
+      { "name": "button-swap", "value": "background-color, color 160ms ease-out", "purpose": "Primary and secondary hover swaps." },
+      { "name": "reduced-motion", "value": "transition: none; running patch static at inset(0 50% 0 0)", "purpose": "Under prefers-reduced-motion: reduce, no wipes or swaps; a running patch sits half-inked." }
+    ],
+    "breakpoints": [
+      { "name": "narrow", "value": "max-width: 1280px" },
+      { "name": "short", "value": "max-height: 820px" }
+    ]
+  },
+  "components": [
+    {
+      "name": "Apply button",
+      "kind": "button",
+      "refersTo": "button-primary",
+      "description": "The sign-off's primary action: key fill, swaps to paper on hover.",
+      "html": "<button class=\"ds-primary\">Apply</button>",
+      "css": ".ds-primary { height: 46px; padding: 0 18px; border: 2px solid #1a1a1a; border-radius: 0; background: #1a1a1a; color: #ffffff; font: 600 17px 'Familjen Grotesk', system-ui, sans-serif; cursor: pointer; transition: background-color 160ms cubic-bezier(0.16,1,0.3,1), color 160ms cubic-bezier(0.16,1,0.3,1); } .ds-primary:hover { background: #ffffff; color: #1a1a1a; } .ds-primary:focus-visible { outline: 2px solid #1a1a1a; outline-offset: 3px; } .ds-primary:disabled { background: #ffffff; color: #5e5e5e; border-color: #d4d4d4; cursor: not-allowed; }"
+    },
+    {
+      "name": "Apply on a drop plan",
+      "kind": "button",
+      "refersTo": "button-primary-drop",
+      "description": "Apply in spot red, only when the plan drops a database.",
+      "html": "<button class=\"ds-primary-drop\">Apply</button>",
+      "css": ".ds-primary-drop { height: 46px; padding: 0 18px; border: 2px solid #e10600; border-radius: 0; background: #e10600; color: #ffffff; font: 600 17px 'Familjen Grotesk', system-ui, sans-serif; cursor: pointer; transition: background-color 160ms cubic-bezier(0.16,1,0.3,1), color 160ms cubic-bezier(0.16,1,0.3,1); } .ds-primary-drop:hover { background: #ffffff; color: #e10600; } .ds-primary-drop:focus-visible { outline: 2px solid #1a1a1a; outline-offset: 3px; }"
+    },
+    {
+      "name": "Secondary button",
+      "kind": "button",
+      "refersTo": "button-secondary",
+      "description": "Not now, Close: paper with a key stroke.",
+      "html": "<button class=\"ds-secondary\">Not now</button>",
+      "css": ".ds-secondary { height: 46px; padding: 0 18px; border: 2px solid #1a1a1a; border-radius: 0; background: #ffffff; color: #1a1a1a; font: 600 17px 'Familjen Grotesk', system-ui, sans-serif; cursor: pointer; transition: background-color 160ms cubic-bezier(0.16,1,0.3,1); } .ds-secondary:hover { background: #ededed; } .ds-secondary:focus-visible { outline: 2px solid #1a1a1a; outline-offset: 3px; }"
+    },
+    {
+      "name": "Main navigation",
+      "kind": "nav",
+      "description": "Projects and Settings as plain text; the current page is key with a 2px underline.",
+      "html": "<nav class=\"ds-nav\"><button aria-current=\"page\">Projects</button><button>Settings</button></nav>",
+      "css": ".ds-nav { display: flex; gap: 20px; font-family: 'Familjen Grotesk', system-ui, sans-serif; } .ds-nav button { background: none; border: 0; border-bottom: 2px solid transparent; padding: 0 0 4px; font: 400 15px inherit; font-family: inherit; color: #5e5e5e; cursor: pointer; } .ds-nav button:hover { color: #1a1a1a; } .ds-nav button[aria-current='page'] { color: #1a1a1a; font-weight: 600; border-bottom-color: #1a1a1a; } .ds-nav button:focus-visible { outline: 2px solid #1a1a1a; outline-offset: 3px; }"
+    },
+    {
+      "name": "Project rows",
+      "kind": "custom",
+      "refersTo": "project-row",
+      "description": "A name and one sentence of state; the selected row is solid key.",
+      "html": "<ul class=\"ds-list\"><li><button class=\"ds-row\"><span class=\"ds-name\">shop-api</span><span class=\"ds-state\">feature/refunds will use feature_refunds_db · plan ready</span></button></li><li><button class=\"ds-row\" aria-current=\"true\"><span class=\"ds-name\">billing</span><span class=\"ds-state\">No database for fix/invoice-rounding yet · plan ready</span></button></li></ul>",
+      "css": ".ds-list { list-style: none; margin: 0; padding: 0; border-top: 1px solid #d4d4d4; width: 360px; font-family: 'Familjen Grotesk', system-ui, sans-serif; } .ds-list li { border-bottom: 1px solid #d4d4d4; } .ds-row { display: block; width: 100%; text-align: left; background: #ffffff; color: #1a1a1a; border: 0; padding: 18px 28px 20px; font-family: inherit; cursor: pointer; } .ds-row:hover { background: #ededed; } .ds-name { display: block; font-size: 24px; font-weight: 600; letter-spacing: -0.015em; line-height: 1.15; margin-bottom: 5px; } .ds-state { display: block; font-size: 15px; color: #5e5e5e; } .ds-row[aria-current='true'] { background: #1a1a1a; color: #ffffff; } .ds-row[aria-current='true'] .ds-state { color: #ffffff; } .ds-row:focus-visible { outline: 2px solid #1a1a1a; outline-offset: 3px; } .ds-row[aria-current='true']:focus-visible { outline-color: #ffffff; outline-offset: -6px; }"
+    },
+    {
+      "name": "Colour bar",
+      "kind": "custom",
+      "refersTo": "colour-bar",
+      "description": "One patch per step in its family's ink; inked, running, pending and failed states, with the clip-path ink wipe.",
+      "html": "<ol class=\"ds-bar\"><li class=\"ds-patch ds-key\" data-state=\"inked\"><span class=\"ds-ink\"></span><b>1</b><span>Hold</span></li><li class=\"ds-patch ds-cyan\" data-state=\"running\"><span class=\"ds-ink\"></span><b>2</b><span>Copy</span></li><li class=\"ds-patch ds-magenta\" data-state=\"pending\"><span class=\"ds-ink\"></span><b>3</b><span>Route</span></li><li class=\"ds-patch ds-yellow\" data-state=\"pending\"><span class=\"ds-ink\"></span><b>4</b><span>Migrate</span></li><li class=\"ds-patch ds-spot\" data-state=\"inked\"><span class=\"ds-ink\"></span><b>5</b><span>Drop</span></li></ol>",
+      "css": ".ds-bar { display: flex; gap: 2px; height: 78px; list-style: none; margin: 0; padding: 0; font-family: 'Familjen Grotesk', system-ui, sans-serif; } .ds-patch { position: relative; flex: 1; min-width: 0; display: flex; justify-content: space-between; align-items: flex-end; gap: 8px; padding: 10px 16px; background: color-mix(in srgb, var(--p) 16%, #ffffff); color: #1a1a1a; overflow: hidden; } .ds-patch b, .ds-patch > span:not(.ds-ink) { position: relative; z-index: 1; transition: color 300ms cubic-bezier(0.16,1,0.3,1); } .ds-patch b { font-size: 44px; font-weight: 700; line-height: 0.9; letter-spacing: -0.02em; } .ds-patch > span:not(.ds-ink) { font-size: 15px; font-weight: 600; white-space: nowrap; } .ds-ink { position: absolute; inset: 0; background: var(--p); clip-path: inset(0 100% 0 0); transition: clip-path 700ms cubic-bezier(0.16,1,0.3,1); } .ds-patch[data-state='inked'] .ds-ink { clip-path: inset(0 0 0 0); } .ds-patch[data-state='inked'] b, .ds-patch[data-state='inked'] > span:not(.ds-ink) { color: var(--pf); } .ds-patch[data-state='running'] .ds-ink { animation: ds-laying 9s cubic-bezier(0.16,1,0.3,1) forwards; } @keyframes ds-laying { from { clip-path: inset(0 100% 0 0); } to { clip-path: inset(0 22% 0 0); } } .ds-key { --p: #1a1a1a; --pf: #ffffff; } .ds-cyan { --p: #00a0e0; --pf: #1a1a1a; } .ds-magenta { --p: #e5007d; --pf: #ffffff; } .ds-yellow { --p: #ffe600; --pf: #1a1a1a; } .ds-spot { --p: #e10600; --pf: #ffffff; } @media (prefers-reduced-motion: reduce) { .ds-ink, .ds-patch b, .ds-patch > span { transition: none; } .ds-patch[data-state='running'] .ds-ink { animation: none; clip-path: inset(0 50% 0 0); } }"
+    },
+    {
+      "name": "Step list",
+      "kind": "custom",
+      "description": "Numbered steps between hairlines; the number square carries the step's ink, identifiers in Courier.",
+      "html": "<ol class=\"ds-steps\"><li><b class=\"ds-num\" style=\"--p:#00a0e0;--pf:#1a1a1a\">2</b><span>Create <code>fix_invoice_rounding_db</code> as a copy of <code>app_dev</code></span><span class=\"ds-meta\">1.2 GB</span></li><li data-state=\"pending\"><b class=\"ds-num\" style=\"--p:#ffe600;--pf:#1a1a1a\">5</b><span class=\"ds-text\">Run 1 migration: 7c21_add_rounding_mode.py</span></li></ol>",
+      "css": ".ds-steps { list-style: none; margin: 0; padding: 0; font-family: 'Familjen Grotesk', system-ui, sans-serif; color: #1a1a1a; } .ds-steps li { display: flex; align-items: center; gap: 20px; min-height: 48px; padding: 7px 0; border-top: 1px solid #d4d4d4; font-size: 17px; } .ds-steps li:last-child { border-bottom: 1px solid #d4d4d4; } .ds-steps li[data-state='pending'] .ds-text { color: #5e5e5e; } .ds-num { flex: none; width: 34px; height: 34px; display: grid; place-items: center; font-size: 22px; font-weight: 700; background: var(--p); color: var(--pf); } .ds-steps code { font-family: 'Courier Prime', ui-monospace, monospace; font-size: 0.94em; } .ds-meta { margin-left: auto; padding-left: 16px; color: #5e5e5e; font-size: 15px; }"
+    },
+    {
+      "name": "Proof sheet footer: slug line and sign-off box",
+      "kind": "card",
+      "refersTo": "signoff",
+      "description": "A paper sheet inside crop marks; the footer carries the Courier slug line and the OK to apply box.",
+      "html": "<section class=\"ds-sheet\"><i class=\"ds-crop ds-tl\"></i><i class=\"ds-crop ds-br\"></i><footer class=\"ds-foot\"><p class=\"ds-slug\">billing · switch · 5 steps · +1.2 GB · nothing destructive</p><div class=\"ds-signoff\"><h3>OK to apply</h3><div class=\"ds-row2\"><button class=\"ds-apply\">Apply</button><button class=\"ds-cancel\">Not now</button></div></div></footer></section>",
+      "css": ".ds-sheet { position: relative; background: #ffffff; color: #1a1a1a; font-family: 'Familjen Grotesk', system-ui, sans-serif; margin: 30px; } .ds-crop { position: absolute; width: 0; height: 0; } .ds-crop::before, .ds-crop::after { content: ''; position: absolute; background: #1a1a1a; } .ds-crop::before { width: 22px; height: 1px; } .ds-crop::after { width: 1px; height: 22px; } .ds-tl { top: 0; left: 0; } .ds-tl::before { top: 0; right: 8px; } .ds-tl::after { left: 0; bottom: 8px; } .ds-br { bottom: 0; right: 0; } .ds-br::before { top: -1px; left: 8px; } .ds-br::after { left: -1px; top: 8px; } .ds-foot { display: flex; justify-content: space-between; align-items: flex-end; gap: 32px; padding: 18px 44px 30px; } .ds-slug { flex: 1; margin: 0; font-family: 'Courier Prime', ui-monospace, monospace; font-size: 13px; line-height: 1.6; border-top: 1px solid #1a1a1a; padding-top: 8px; } .ds-signoff { flex: none; width: 330px; border: 2px solid #1a1a1a; padding: 16px 20px 18px; display: grid; gap: 10px; } .ds-signoff h3 { margin: 0; font-size: 22px; font-weight: 700; letter-spacing: -0.01em; } .ds-row2 { display: flex; gap: 10px; } .ds-apply, .ds-cancel { height: 46px; border: 2px solid #1a1a1a; border-radius: 0; padding: 0 18px; font: 600 17px 'Familjen Grotesk', system-ui, sans-serif; cursor: pointer; transition: background-color 160ms cubic-bezier(0.16,1,0.3,1), color 160ms cubic-bezier(0.16,1,0.3,1); } .ds-apply { flex: 1; background: #1a1a1a; color: #ffffff; } .ds-apply:hover { background: #ffffff; color: #1a1a1a; } .ds-cancel { background: #ffffff; color: #1a1a1a; } .ds-cancel:hover { background: #ededed; } .ds-apply:focus-visible, .ds-cancel:focus-visible { outline: 2px solid #1a1a1a; outline-offset: 3px; }"
+    },
+    {
+      "name": "Facts and Query note",
+      "kind": "custom",
+      "description": "Sentence-case soft labels over large values; warnings open with a bold inline Query.",
+      "html": "<div class=\"ds-facts\"><div><h3>The app will use</h3><p class=\"ds-db\">fix_invoice_rounding_db</p></div><div><h3>Disk on the Docker host</h3><p class=\"ds-big\">41.3<em>→</em>40.1<small>GB free</small></p></div></div><p class=\"ds-query\"><strong>Query</strong> The db service isn't running. Start it with <code>docker compose up -d db</code>.</p>",
+      "css": ".ds-facts { display: grid; grid-template-columns: 1fr 1fr; gap: 40px; padding: 22px 0 24px; font-family: 'Familjen Grotesk', system-ui, sans-serif; color: #1a1a1a; } .ds-facts h3 { margin: 0 0 6px; font-size: 15px; font-weight: 600; color: #5e5e5e; } .ds-db { margin: 0; font-family: 'Courier Prime', ui-monospace, monospace; font-size: 22px; } .ds-big { margin: 0; font-size: 56px; font-weight: 700; letter-spacing: -0.03em; line-height: 1; } .ds-big em { font-style: normal; font-weight: 400; margin: 0 10px; } .ds-big small { font-size: 22px; font-weight: 600; letter-spacing: 0; margin-left: 6px; } .ds-query { font-family: 'Familjen Grotesk', system-ui, sans-serif; font-size: 15px; max-width: 75ch; color: #1a1a1a; } .ds-query strong { font-weight: 700; margin-right: 6px; } .ds-query code { font-family: 'Courier Prime', ui-monospace, monospace; font-size: 0.94em; }"
+    }
+  ],
+  "narrative": {
+    "northStar": "The Press Proof",
+    "overview": "Every plan is a prepress proof laid on a light table. It sits inside thin crop marks, opens with a colour bar of numbered patches, lists its steps, states the facts (schema change, disk before and after), carries a typed slug line, and ends in an \"OK to apply\" box. Nothing runs until the proof is signed. The world refuses the category default of sidebar, list, detail and a blue Apply button in a drawer.\n\nThe system is paper and key black on a grey table. Colour is never decoration: the three process inks name step families and the spot red names a drop. Type is one grotesk, set big and tight for numerals and titles and plain for sentences, with a typewriter face kept for the things a person would copy: database names, commands and the slug. The dark theme is the same light table at night: the ground and the sheet go dark, the key ink inverts, and the process and spot inks keep their values and roles.\n\nDensity is low and the scale is large. Rows carry a 24px name and one plain sentence of state. Figures run at 40 to 56px. Labels are sentence-case soft text above their values.",
+    "keyCharacteristics": [
+      "Paper sheets on a light-table ground, flat, square-cornered, framed by 1px crop marks.",
+      "A colour bar whose patches are the plan's steps, each in its family's ink.",
+      "One grotesk (Familjen Grotesk) with Courier Prime only for identifiers and slugs.",
+      "Hairline 1px rules between rows and steps; 2px key borders on the sign-off box and its buttons.",
+      "Motion is ink laid down left to right with a clip-path wipe."
+    ],
+    "rules": [
+      { "name": "The Process Ink Rule", "body": "Cyan, magenta and yellow appear only as step families: patch fills, patch tints and step-number squares. Never use them for status, links, emphasis or decoration.", "section": "colors" },
+      { "name": "The Spot Rule", "body": "Spot red marks a drop and nothing else. A plan that drops a database turns its sign-off box and Apply red; a plan that drops nothing has no red on the sheet.", "section": "colors" },
+      { "name": "The Same Inks At Night Rule", "body": "The dark theme changes only the table, paper, key, soft and rule values. The process and spot inks keep the same values and roles.", "section": "colors" },
+      { "name": "The Courier Rule", "body": "Courier Prime is only for identifiers (database names, commands, paths) and the slug line. Titles, sentences, labels and figures stay in the grotesk.", "section": "typography" },
+      { "name": "The Sentence-Case Rule", "body": "No tracked caps labels and no eyebrows. A label is a 15px semibold soft sentence placed directly above its value.", "section": "typography" },
+      { "name": "The Flat Paper Rule", "body": "No drop shadows and no blur. A sheet is distinguished from the table by its tone and its crop marks.", "section": "elevation" }
+    ],
+    "dos": [
+      "Do show every operation as a proof with an \"OK to apply\" sign-off before anything runs.",
+      "Do colour a step by its family (key, cyan, magenta, yellow, spot) and use that ink for both its patch and its number square.",
+      "Do set database names, commands, paths and the slug in Courier Prime at 0.94em of the surrounding size.",
+      "Do keep corners square, rules 1px, and sign-off strokes 2px key.",
+      "Do keep the process and spot inks identical in light and dark; switch only the table, paper, key, soft and rule values.",
+      "Do keep the reduced-motion fallback: a static half-inked running patch, no transitions."
+    ],
+    "donts": [
+      "Don't use cyan, magenta or yellow for anything other than a step family.",
+      "Don't use spot red for anything but a drop.",
+      "Don't use Courier for titles, labels, sentences or figures.",
+      "Don't set labels in tracked caps or add eyebrows above titles; labels are sentence-case 15px semibold soft text.",
+      "Don't add drop shadows, rounded corners or a coloured Apply button outside a drop plan."
+    ]
+  }
+}

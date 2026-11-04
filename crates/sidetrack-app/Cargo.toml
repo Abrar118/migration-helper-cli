@@ -1,0 +1,17 @@
+[package]
+name = "sidetrack-app"
+description = "Desktop app for sidetrack: every project's DB branches, and plans you can apply."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+sidetrack-core = { path = "../sidetrack-core" }
+tauri = { version = "2", features = [] }
+serde.workspace = true
+serde_json.workspace = true
+anyhow.workspace = true

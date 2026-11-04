@@ -1,1 +1,11 @@
 /target
+
+# Impeccable design tooling: keep the surface briefs (direction contract), the
+# design sidecar, the chosen decision sketch and the seed record; the rest is
+# local working state (review screenshots, logs, unchosen sketches, caches).
+/.impeccable/hook.cache.json
+/.impeccable/review/
+/.impeccable/questions/*.log
+/.impeccable/questions/roll.json
+/.impeccable/mocks/decision/*
+!/.impeccable/mocks/decision/r2-pick.html

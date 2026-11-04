@@ -36,3 +36,30 @@ jobs:
         run: |
           pip install alembic "psycopg[binary]"
           tests/e2e/alembic.sh
+
+  # The desktop app (crates/sidetrack-app): Tauri needs WebKitGTK on Linux and a
+  # built frontend, so it's checked separately from the default workspace members.
+  app:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: crates/sidetrack-app
+    steps:
+      - uses: actions/checkout@v4
+      - name: System libraries for Tauri
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libxdo-dev libssl-dev libayatana-appindicator3-dev librsvg2-dev
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+      - uses: Swatinem/rust-cache@v2
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: crates/sidetrack-app/package-lock.json
+      - run: npm ci
+      - name: Type-check and build the frontend
+        run: npm run build
+      - run: cargo clippy -p sidetrack-app --all-targets -- -D warnings
