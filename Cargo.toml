@@ -1,6 +1,10 @@
 [workspace]
 resolver = "2"
-members = ["crates/sidetrack-core", "crates/sidetrack"]
+members = ["crates/sidetrack-core", "crates/sidetrack", "crates/sidetrack-app"]
+# The desktop app needs system WebView libraries (webkit2gtk on Linux) and a built
+# frontend, so plain `cargo build` / `cargo test` leave it out. Build it with
+# `cargo build -p sidetrack-app` or `npm run tauri dev` in crates/sidetrack-app.
+default-members = ["crates/sidetrack-core", "crates/sidetrack"]
 
 [workspace.package]
 version = "0.1.0"

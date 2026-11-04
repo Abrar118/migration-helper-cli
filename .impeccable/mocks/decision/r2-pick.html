@@ -1,0 +1,145 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>sidetrack · All projects</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Familjen+Grotesk:wght@400;600;700&family=Courier+Prime&display=swap" rel="stylesheet">
+<style>
+:root{--paper:#FFFFFF;--key:#1A1A1A;--c:#00A0E0;--m:#E5007D;--y:#FFE600;--table:#EDEDED;--soft:#5E5E5E;--rule:#D4D4D4}
+*{box-sizing:border-box}
+html,body{width:1440px;height:900px;overflow:hidden;margin:0}
+body{background:var(--table);color:var(--key);font-family:"Familjen Grotesk",sans-serif;display:flex;font-size:16px;line-height:1.4}
+.db{font-family:"Courier Prime",monospace;font-size:.94em}
+.nw{white-space:nowrap}
+button{font:inherit;cursor:pointer}
+
+/* left column */
+.col{width:360px;background:var(--paper);display:flex;flex-direction:column;border-right:1px solid var(--rule)}
+.top{display:flex;align-items:baseline;justify-content:space-between;padding:28px 28px 0}
+.mark{font-size:22px;font-weight:700;letter-spacing:-.01em}
+.nav{display:flex;gap:20px;font-size:15px}
+.nav a{color:var(--soft);text-decoration:none;padding-bottom:4px}
+.nav a.on{color:var(--key);font-weight:600;border-bottom:2px solid var(--key)}
+.col h1{font-size:40px;font-weight:700;letter-spacing:-.02em;line-height:1;margin:40px 28px 20px}
+.list{list-style:none;margin:0;padding:0;border-top:1px solid var(--rule)}
+.list li{padding:18px 28px 20px;border-bottom:1px solid var(--rule)}
+.list .name{font-size:28px;font-weight:600;letter-spacing:-.015em;line-height:1.15;margin-bottom:6px}
+.list .state{font-size:15px;color:var(--soft)}
+.list li.sel{background:var(--key);color:var(--paper);border-color:var(--key)}
+.list li.sel .state{color:var(--paper)}
+.stopped{color:#C4006B!important;font-weight:600}
+.disk{margin-top:auto;padding:24px 28px 30px;border-top:1px solid var(--rule)}
+.disk .n{font-size:56px;font-weight:700;letter-spacing:-.03em;line-height:1}
+.disk .n small{font-size:22px;font-weight:600;letter-spacing:0;margin-left:6px}
+.disk .of{font-size:15px;color:var(--soft);margin-top:8px}
+.meter{height:10px;background:var(--table);margin-top:14px;display:flex}
+.meter i{width:29%;background:var(--key)}
+
+/* main: light table */
+.main{flex:1;padding:34px 64px 0;display:flex;flex-direction:column}
+.lead{display:flex;justify-content:space-between;align-items:baseline;margin-bottom:34px}
+.lead p{margin:0;font-size:22px;font-weight:600;letter-spacing:-.01em}
+.lead span{font-size:15px;color:var(--soft)}
+.sheet{position:relative;background:var(--paper);display:flex;flex-direction:column}
+/* crop marks, just outside the four corners */
+.crop{position:absolute;width:0;height:0}
+.crop::before,.crop::after{content:"";position:absolute;background:var(--key)}
+.crop::before{width:22px;height:1px}
+.crop::after{width:1px;height:22px}
+.tl{top:0;left:0}.tl::before{top:0;right:8px}.tl::after{left:0;bottom:8px}
+.tr{top:0;right:0}.tr::before{top:0;left:8px}.tr::after{left:-1px;bottom:8px}
+.bl{bottom:0;left:0}.bl::before{top:-1px;right:8px}.bl::after{left:0;top:8px}
+.br{bottom:0;right:0}.br::before{top:-1px;left:8px}.br::after{left:-1px;top:8px}
+
+.bar{display:flex;gap:2px;height:78px}
+.p{flex:1;padding:10px 16px;display:flex;justify-content:space-between;align-items:flex-end}
+.p b{font-size:44px;font-weight:700;line-height:.9;letter-spacing:-.02em}
+.p span{font-size:15px;font-weight:600}
+.k{background:var(--key);color:var(--paper)}
+.cy{background:var(--c);color:var(--key)}
+.mg{background:var(--m);color:var(--paper)}
+.ye{background:var(--y);color:var(--key)}
+.body{padding:30px 44px 0}
+.body h2{font-size:44px;font-weight:700;letter-spacing:-.025em;line-height:1.05;margin:0 0 22px}
+.steps{list-style:none;margin:0;padding:0}
+.steps li{display:flex;align-items:center;gap:20px;height:52px;border-top:1px solid var(--rule);font-size:17px}
+.steps li:last-child{border-bottom:1px solid var(--rule)}
+.steps li > b{width:34px;height:34px;display:flex;align-items:center;justify-content:center;font-size:22px;font-weight:700}
+.steps .meta{margin-left:auto;color:var(--soft);font-size:15px}
+.facts{display:grid;grid-template-columns:1fr 1fr;gap:40px;padding:22px 0 0}
+.facts h3{font-size:15px;font-weight:600;color:var(--soft);margin:0 0 6px}
+.facts .v{font-size:22px;font-weight:600}
+.facts .big{font-size:56px;font-weight:700;letter-spacing:-.03em;line-height:1}
+.facts .big small{font-size:22px;font-weight:600;letter-spacing:0;margin-left:4px}
+.facts .big em{font-style:normal;font-weight:400;margin:0 10px}
+.foot{display:flex;justify-content:space-between;align-items:flex-end;margin-top:auto;padding:0 44px 30px}
+.slug{font-family:"Courier Prime",monospace;font-size:14px;color:var(--key);border-top:1px solid var(--key);padding-top:8px;font-size:13px;white-space:nowrap}
+.ok{border:2px solid var(--key);padding:16px 20px 18px;width:290px}
+.ok h4{font-size:22px;font-weight:700;margin:0 0 12px;letter-spacing:-.01em}
+.ok .row{display:flex;gap:10px}
+.apply{flex:1;background:var(--key);color:var(--paper);border:2px solid var(--key);height:46px;font-size:17px;font-weight:600}
+.cancel{width:100px;background:var(--paper);color:var(--key);border:2px solid var(--key);height:46px;font-size:17px;font-weight:600}
+</style>
+</head>
+<body>
+<aside class="col">
+  <div class="top">
+    <div class="mark">sidetrack</div>
+    <nav class="nav"><a class="on" href="#">Projects</a><a href="#">Settings</a></nav>
+  </div>
+  <h1>All projects</h1>
+  <ul class="list">
+    <li><div class="name">shop-api</div><div class="state">On <span class="db">feature_payments_db</span> · <span class="nw">6 branches, 2 snapshots</span></div></li>
+    <li class="sel"><div class="name">billing</div><div class="state">No database for fix/invoice-rounding yet · <span class="nw">plan ready</span></div></li>
+    <li><div class="name">analytics-etl</div><div class="state stopped">Database stopped: <span class="nw">run docker compose up -d db</span></div></li>
+    <li><div class="name">auth-service</div><div class="state">2 worktrees</div></li>
+  </ul>
+  <div class="disk">
+    <div class="n">41.3<small>GB free</small></div>
+    <div class="of">of 58 GB on the Docker host</div>
+    <div class="meter"><i></i></div>
+  </div>
+</aside>
+
+<main class="main">
+  <div class="lead">
+    <p>billing needs a database for fix/invoice-rounding</p>
+    <span>~/code/billing · proxy :54320 · the app is still on <span class="db">app_dev</span></span>
+  </div>
+
+  <section class="sheet" style="height:752px">
+    <i class="crop tl"></i><i class="crop tr"></i><i class="crop bl"></i><i class="crop br"></i>
+    <div class="bar">
+      <div class="p k"><b>1</b><span>Hold</span></div>
+      <div class="p cy"><b>2</b><span>Copy</span></div>
+      <div class="p k"><b>3</b><span>Release</span></div>
+      <div class="p mg"><b>4</b><span>Route</span></div>
+      <div class="p ye"><b>5</b><span>Migrate</span></div>
+    </div>
+    <div class="body">
+      <h2>Switch billing to fix/invoice-rounding</h2>
+      <ol class="steps">
+        <li><b class="k">1</b><span>Hold new connections to <span class="db">app_dev</span></span></li>
+        <li><b class="cy">2</b><span>Create <span class="db">fix_invoice_rounding_db</span> as a copy of <span class="db">app_dev</span></span><span class="meta">1.2 GB, about 4 s</span></li>
+        <li><b class="k">3</b><span>Release connections to <span class="db">app_dev</span></span></li>
+        <li><b class="mg">4</b><span>Route <span class="db">app_dev</span> through the proxy to <span class="db">fix_invoice_rounding_db</span></span></li>
+        <li><b class="ye">5</b><span>Run 1 migration: 7c21_add_rounding_mode</span></li>
+      </ol>
+      <div class="facts">
+        <div><h3>Schema change</h3><div class="v">+ column invoices.rounding_mode</div></div>
+        <div><h3>Disk on the Docker host</h3><div class="big">41.3<em>→</em>40.1<small>GB free</small></div></div>
+      </div>
+    </div>
+    <div class="foot">
+      <div class="slug">billing · switch · 5 steps · 1.2 GB · about 4 s · nothing destructive</div>
+      <div class="ok">
+        <h4>OK to apply</h4>
+        <div class="row"><button class="apply">Apply</button><button class="cancel">Cancel</button></div>
+      </div>
+    </div>
+  </section>
+</main>
+</body>
+</html>

@@ -1,0 +1,20 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
+  <!-- sidetrack app icon: a proof sheet with crop marks and a four-ink colour bar.
+       Drawn by hand for this repo; icons/*.png, .ico and .icns are generated from it
+       with `npx tauri icon icons/source.svg`. -->
+  <rect x="64" y="64" width="896" height="896" rx="160" fill="#ededed"/>
+  <rect x="208" y="208" width="608" height="608" fill="#ffffff"/>
+  <g stroke="#1a1a1a" stroke-width="14" stroke-linecap="square">
+    <path d="M136 208 H176 M208 136 V176"/>
+    <path d="M848 208 H888 M816 136 V176"/>
+    <path d="M136 816 H176 M208 848 V888"/>
+    <path d="M848 816 H888 M816 848 V888"/>
+  </g>
+  <rect x="208" y="208" width="146" height="236" fill="#1a1a1a"/>
+  <rect x="362" y="208" width="146" height="236" fill="#00a0e0"/>
+  <rect x="516" y="208" width="146" height="236" fill="#e5007d"/>
+  <rect x="670" y="208" width="146" height="236" fill="#ffe600"/>
+  <rect x="268" y="532" width="488" height="40" fill="#1a1a1a"/>
+  <rect x="268" y="620" width="372" height="40" fill="#1a1a1a"/>
+  <rect x="268" y="708" width="420" height="40" fill="#1a1a1a"/>
+</svg>

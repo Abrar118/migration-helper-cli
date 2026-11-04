@@ -165,6 +165,21 @@ sidetrack status                     # shows its port (e.g. 54321) and what othe
 
 Detected migration tools: Alembic, Django, Prisma, Rails, Flyway and Knex. Anything else works too: point `dirs` at the migration folder(s) and set `command`.
 
+## Desktop app (preview)
+
+`crates/sidetrack-app` is a Tauri 2 app over the same core. It opens on **All projects**: every project registered on this machine, with the branch, the database it uses, and anything that needs attention. When a project's database doesn't match its branch, the app shows the switch plan as a proof, step by step. **Apply** runs it, with the same rules as the CLI:
+- **Same plan:** before it runs, the plan is built again, and nothing runs if it no longer matches the one on screen.
+- **Destructive plans:** these need an explicit confirmation.
+
+```bash
+cd crates/sidetrack-app
+npm install
+npm run tauri dev      # the app, against your real registry
+npm run dev            # the UI alone in a browser, with demo data
+```
+
+It needs the [Tauri prerequisites](https://v2.tauri.app/start/prerequisites/) (WebKitGTK on Linux, WebView2 on Windows).
+
 ## Limitations (v1)
 
 - **Postgres only.** MySQL/MariaDB is next, then SQL Server and Oracle (see the spec's phasing).
@@ -190,6 +205,7 @@ crates/sidetrack-core   all logic: naming, config, registry, git, compose, detec
                         Postgres engine, planner, applier
 
 crates/sidetrack        the CLI and git hook
+crates/sidetrack-app    the desktop app (Tauri 2; React + Vite frontend in ui/)
 tests/e2e               a compose fixture and the end-to-end script
 ```
 ## Ackowledgement
