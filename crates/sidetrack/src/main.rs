@@ -347,36 +347,39 @@ fn init(
         if opts.json {
             println!("{}", json!({ "detected": found }));
         } else {
-            println!("Detected:\n{}", found.render());
+            println!("Detected:\n{}", found.render(proxy));
         }
-        let mut cfg = found.to_config(main_branch.clone()).context(
+        let cfg = found.to_config(main_branch.clone(), proxy).context(
             "detection is incomplete; write sidetrack.toml by hand (see README) and run `sidetrack init` again",
         )?;
         if proxy {
-            let env = Workspace::from_parts(
-                git.clone(),
-                cfg.clone(),
-                Registry::open(&registry::default_path()?)?,
-            );
-            let app_db = env.active_db()?.with_context(|| {
-                format!(
-                    "can't read the app's database name from {} in {}",
-                    cfg.routing.variable, cfg.routing.file
-                )
-            })?;
+            let url = if cfg.routing.file.is_empty() {
+                let vars: Vec<String> = found
+                    .inline
+                    .iter()
+                    .map(|i| format!("{} ({})", i.variable, i.service))
+                    .collect();
+                format!("{} in the compose file", vars.join(", "))
+            } else {
+                format!("{} in {}", cfg.routing.variable, cfg.routing.file)
+            };
             println!(
-                "Proxy mode: point {} in {} at the proxy, once: host `host.docker.internal` from containers \
-                 (`localhost` from this machine), port {}, database {app_db}.\n\
+                "Proxy mode: point {url} at the proxy, once: host `host.docker.internal` from containers \
+                 (`localhost` from this machine), port {}, database {}.\n\
                  On Linux, containers also need `extra_hosts: [\"host.docker.internal:host-gateway\"]` \
                  and the proxy must listen on 0.0.0.0 (routing.listen).",
-                cfg.routing.variable,
-                cfg.routing.file,
                 sidetrack_core::config::DEFAULT_PROXY_LISTEN
                     .rsplit(':')
                     .next()
-                    .unwrap_or_default()
+                    .unwrap_or_default(),
+                found.active_db,
             );
-            cfg.routing.use_proxy(&app_db);
+            if cfg.routing.file.is_empty() {
+                println!(
+                    "Git worktrees can't get their own database with the URL in the compose file. \
+                     For that, move it to an untracked .env file and set routing.file and routing.variable."
+                );
+            }
         }
         if opts.dry_run {
             println!("{}", cfg.to_toml()?);

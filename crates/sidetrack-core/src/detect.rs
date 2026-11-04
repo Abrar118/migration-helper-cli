@@ -33,6 +33,9 @@ pub struct Detection {
     pub app_services: Vec<String>,
     pub routing: Option<Routing>,
     pub routing_problem: Option<String>,
+    /// App services whose DB name is written directly in compose `environment:`.
+    /// Env mode can't rewrite it; proxy mode doesn't need to.
+    pub inline: Vec<Inline>,
     pub migrations: Migrations,
     pub notes: Vec<String>,
 }
@@ -43,6 +46,12 @@ pub struct Routing {
     pub file: String,
     pub variable: String,
     pub services: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct Inline {
+    pub service: String,
+    pub variable: String,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -122,7 +131,7 @@ pub fn detect(root: &Path, compose_dir: &Path, views: &ComposeViews) -> Result<D
         .collect();
 
     // ---- routing variable
-    let (routing, routing_problem) = find_routing(
+    let (routing, routing_problem, inline) = find_routing(
         root,
         compose_dir,
         views,
@@ -144,6 +153,7 @@ pub fn detect(root: &Path, compose_dir: &Path, views: &ComposeViews) -> Result<D
         app_services,
         routing,
         routing_problem,
+        inline,
         migrations,
         notes,
     })
@@ -190,10 +200,11 @@ fn find_routing(
     app_services: &[String],
     active_db: &str,
     notes: &mut Vec<String>,
-) -> (Option<Routing>, Option<String>) {
+) -> (Option<Routing>, Option<String>, Vec<Inline>) {
     // (file, variable) → services that read the DB name from it
     let mut sources: BTreeMap<(String, String), Vec<String>> = BTreeMap::new();
     let mut problems = vec![];
+    let mut inline = vec![];
 
     for svc in app_services {
         let Some(resolved) = views.resolved.services.get(svc) else {
@@ -207,10 +218,20 @@ fn find_routing(
             .map(|(_, k)| k.clone());
         let Some(var) = best else { continue };
         match locate_variable(root, compose_dir, views, svc, &var, active_db) {
-            Ok((file, variable)) => sources
+            Ok(Some((file, variable))) => sources
                 .entry((file, variable))
                 .or_default()
                 .push(svc.clone()),
+            Ok(None) => {
+                problems.push(format!(
+                    "{svc}: {var} is written directly in the compose file; move it to an untracked \
+                     .env file so sidetrack can change it, or use `sidetrack init --proxy`"
+                ));
+                inline.push(Inline {
+                    service: svc.clone(),
+                    variable: var,
+                });
+            }
             Err(e) => problems.push(format!("{svc}: {e}")),
         }
     }
@@ -221,7 +242,7 @@ fn find_routing(
         } else {
             problems.join("; ")
         };
-        return (None, Some(msg));
+        return (None, Some(msg), inline);
     };
     for ((f, v), s) in &sources {
         if (f, v) != (file, variable) {
@@ -239,10 +260,12 @@ fn find_routing(
             services: services.clone(),
         }),
         None,
+        inline,
     )
 }
 
 /// Find which env file (and variable) a service's `var` really comes from.
+/// `None` when it's written directly in the compose file.
 fn locate_variable(
     root: &Path,
     compose_dir: &Path,
@@ -250,7 +273,7 @@ fn locate_variable(
     svc: &str,
     var: &str,
     active_db: &str,
-) -> Result<(String, String)> {
+) -> Result<Option<(String, String)>> {
     let env_view = views
         .env_files
         .services
@@ -267,7 +290,7 @@ fn locate_variable(
             .unwrap_or_default()
             .to_string();
         let Some(reference) = variable_reference(&raw) else {
-            bail!("{var} is written directly in the compose file; move it to an untracked .env file so sidetrack can change it");
+            return Ok(None);
         };
         let dotenv = compose_dir.join(".env");
         let content = std::fs::read_to_string(&dotenv).with_context(|| {
@@ -283,7 +306,7 @@ fn locate_variable(
                 "{var} builds the DB name from ${{{reference}}} in a way sidetrack can't rewrite"
             );
         }
-        return Ok((relative(root, &dotenv), reference));
+        return Ok(Some((relative(root, &dotenv), reference)));
     }
 
     // Otherwise it comes from an env_file; later files win.
@@ -294,7 +317,7 @@ fn locate_variable(
         };
         if let Some(value) = envfile::get(&content, var) {
             if envfile::db_name_in_value(&value).as_deref() == Some(active_db) {
-                return Ok((relative(root, &path), var.to_string()));
+                return Ok(Some((relative(root, &path), var.to_string())));
             }
             bail!(
                 "{var} in {} gets its DB name indirectly; point it at the DB name directly",
@@ -592,12 +615,26 @@ fn detect_migrations(
 
 impl Detection {
     /// Turn findings into a config. `user` must be known (resolve `user_file` first).
-    pub fn to_config(&self, main_branch: Option<String>) -> Result<Config> {
-        let routing = self.routing.as_ref().with_context(|| {
-            self.routing_problem
-                .clone()
-                .unwrap_or_else(|| "no routing variable found".into())
-        })?;
+    /// With `proxy`, a DB name written directly in compose is fine: the app keeps
+    /// its URL and the proxy routes it.
+    pub fn to_config(&self, main_branch: Option<String>, proxy: bool) -> Result<Config> {
+        let (file, variable, mut restart) = match &self.routing {
+            Some(r) => (r.file.clone(), r.variable.clone(), r.services.clone()),
+            None if proxy && !self.inline.is_empty() => Default::default(),
+            None => bail!(
+                "{}",
+                self.routing_problem
+                    .as_deref()
+                    .unwrap_or("no routing variable found")
+            ),
+        };
+        if proxy {
+            for i in &self.inline {
+                if !restart.contains(&i.service) {
+                    restart.push(i.service.clone());
+                }
+            }
+        }
         anyhow::ensure!(
             !self.migrations.dirs.is_empty(),
             "no migration folder found; set migrations.dirs"
@@ -608,7 +645,7 @@ impl Detection {
             .clone()
             .context("no migration command found; set migrations.command")?;
         let user = self.user.clone().unwrap_or_else(|| "postgres".into());
-        Ok(Config {
+        let mut cfg = Config {
             database: DatabaseConfig {
                 engine: "postgres".into(),
                 service: self.db_service.clone(),
@@ -617,9 +654,9 @@ impl Detection {
             },
             routing: RoutingConfig {
                 mode: "env".into(),
-                file: routing.file.clone(),
-                variable: routing.variable.clone(),
-                restart: routing.services.clone(),
+                file,
+                variable,
+                restart,
                 database: None,
                 listen: None,
                 upstream: None,
@@ -636,10 +673,14 @@ impl Detection {
             compose: ComposeConfig::default(),
             git: GitConfig { main_branch },
             snapshots: Default::default(),
-        })
+        };
+        if proxy {
+            cfg.routing.use_proxy(&self.active_db);
+        }
+        Ok(cfg)
     }
 
-    pub fn render(&self) -> String {
+    pub fn render(&self, proxy: bool) -> String {
         let mut s = String::new();
         s.push_str(&format!("Compose project:  {}\n", self.compose_project));
         s.push_str(&format!(
@@ -670,6 +711,17 @@ impl Detection {
                 r.file,
                 r.services.join(", ")
             )),
+            (None, _) if proxy && !self.inline.is_empty() => {
+                let vars: Vec<String> = self
+                    .inline
+                    .iter()
+                    .map(|i| format!("{} ({})", i.variable, i.service))
+                    .collect();
+                s.push_str(&format!(
+                    "DB name lives in: {} in the compose file  (fine in proxy mode)\n",
+                    vars.join(", ")
+                ));
+            }
             (None, Some(p)) => s.push_str(&format!("DB name lives in: ✗ {p}\n")),
             (None, None) => {}
         }
@@ -759,9 +811,16 @@ mod tests {
             d.migrations.command.as_deref(),
             Some("docker compose exec -T api alembic -c /app/alembic.ini upgrade head")
         );
-        let cfg = d.to_config(Some("main".into())).unwrap();
+        let cfg = d.to_config(Some("main".into()), false).unwrap();
         assert_eq!(cfg.database.user, "app");
         assert_eq!(cfg.routing.restart, ["api"]);
+        // Proxy mode keeps the env file, so worktrees can get their own port.
+        let cfg = d.to_config(Some("main".into()), true).unwrap();
+        assert_eq!(cfg.routing.database.as_deref(), Some("app_dev"));
+        assert_eq!(
+            (cfg.routing.file.as_str(), cfg.routing.variable.as_str()),
+            (".env.local", "DATABASE_URL")
+        );
     }
 
     #[test]
@@ -808,12 +867,27 @@ mod tests {
             env_files: resolved.clone(),
             raw: resolved,
         };
-        let d = detect(dir.path(), dir.path(), &views).unwrap();
+        write(dir.path(), "migrations/001.sql", "");
+        let mut d = detect(dir.path(), dir.path(), &views).unwrap();
+        d.migrations.command = Some("./migrate.sh".into());
         assert!(d.routing.is_none());
         assert!(d
             .routing_problem
+            .as_deref()
             .unwrap()
             .contains("written directly in the compose file"));
+        assert!(d.to_config(None, false).is_err());
+
+        // Proxy mode doesn't need to change it.
+        assert!(d
+            .render(true)
+            .contains("DATABASE_URL (web) in the compose file"));
+        let cfg = d.to_config(None, true).unwrap();
+        cfg.validate().unwrap();
+        assert!(cfg.routing.is_proxy());
+        assert_eq!(cfg.routing.database.as_deref(), Some("postgres"));
+        assert_eq!(cfg.routing.restart, ["web"]);
+        assert!(cfg.routing.file.is_empty());
     }
 
     #[test]

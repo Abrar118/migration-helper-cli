@@ -1,6 +1,6 @@
 # Handoff: where things stand and what's next
 
-Last updated 2026-11-03. Read `CLAUDE.md` first, then this.
+Last updated 2026-11-04. Read `CLAUDE.md` first, then this.
 
 ## State
 
@@ -13,11 +13,12 @@ Last updated 2026-11-03. Read `CLAUDE.md` first, then this.
 | Proxy follow-ups: `proxy --daemon` / `--stop`, `init --proxy` | merged (PR #6) |
 | More proxy follow-ups: autostart, holding connections during copies, detection with several Postgres images | merged (PR #7) |
 | Git worktrees (spec P2) | merged (PR #8) |
-| **Worktree edges:** env-file port wiring, env-mode warning, removal checks | **PR #9, branch `feat/worktree-edges`.** Merge it before starting new work. |
+| Worktree edges: env-file port wiring, env-mode warning, removal checks | merged (PR #9) |
+| **`init --proxy` accepts a DB name written in compose, plus an e2e check** | **branch `feat/init-proxy-inline`.** Merge it before starting new work. |
 
 `main` is protected. Every PR needs one approval, including a code-owner review (`@Abrar118`). The owner can bypass the rules. Force-pushes and deletion are blocked.
 
-Stale remote branches that can be deleted: `docs/v1-spec`, `feat/v1-cli`, `docs/claude-md-branch-rules`, `feat/v1.1`, `feat/migration-readers`, `feat/proxy`, `feat/proxy-followups`, `feat/proxy-followups-2`, `feat/worktrees`, `claude/serene-volta-pj0vti`.
+Stale remote branches that can be deleted: `docs/v1-spec`, `feat/v1-cli`, `docs/claude-md-branch-rules`, `feat/v1.1`, `feat/migration-readers`, `feat/proxy`, `feat/proxy-followups`, `feat/proxy-followups-2`, `feat/worktrees`, `feat/worktree-edges`.
 
 ## Getting going on a new machine
 
@@ -36,6 +37,10 @@ Notes for macOS:
 - **`tests/e2e/run.sh`** uses `script` for its terminal-prompt step, with util-linux syntax (`script -qec`). BSD `script` takes different flags, so that one step may need a tweak.
 - **`tests/e2e/proxy.sh`** relies on `host.docker.internal`, which Docker Desktop provides. It hasn't been run on a Mac yet.
 
+Notes for native Windows (spec open question 6 is still undecided). It builds, but 2 unit tests in `detect.rs` fail:
+- **`django_multi_app_dirs`** is a real bug. `relative()` uses `to_string_lossy()`, so `init` would write `migrations.dirs` with backslashes, and `git ls-tree` needs `/`.
+- **`alembic_in_container_with_env_file`** is a test-only problem: the test pastes a backslash path into JSON.
+
 ## How the proxy works (v2, done)
 
 See plan-v1.md, "Local proxy (v2)", decisions 17–25.
@@ -47,11 +52,11 @@ See plan-v1.md, "Local proxy (v2)", decisions 17–25.
 ### Proxy follow-ups
 
 - ✅ **`sidetrack proxy --daemon` / `--stop`:** done in PR #6. It's Unix-only, since it uses `process_group` and `kill`.
-- ✅ **`init --proxy`:** done in PR #6. It hasn't been tested end to end, because detection picks the wrong service in the e2e fixture, which has two `postgres` images. A test would need a fixture whose app image isn't Postgres.
+- ✅ **`init --proxy`:** done in PR #6.
 - ✅ **Starting the proxy automatically:** done in PR #7 (`routing.autostart`). A launchd / systemd unit, or running the proxy as a compose service, is still possible but not needed.
 - ✅ **Detection with several Postgres images:** done in PR #7.
 - ✅ **Copying without stopping the app:** done in PR #7 (holds). Rename still stops the app. It's rare, and the same `push_pause` helper would cover it.
-- **`init --proxy` end to end:** still untested. Detection refuses a DB name written literally in compose `environment:`, because env mode can't rewrite it. In proxy mode that's fine, so `init --proxy` should allow it. Then `tests/e2e/proxy.sh` could run `init --proxy` instead of writing `sidetrack.toml` by hand.
+- ✅ **`init --proxy` end to end:** done on `feat/init-proxy-inline`. In proxy mode, detection accepts a DB name written directly in compose `environment:` (`Detection.inline`; plan decision 22). The first step of `tests/e2e/proxy.sh` runs a real `init --proxy` on a small Alembic-shaped project; Alembic itself never runs. The main proxy flow still writes `sidetrack.toml` by hand, because its "generic" migrations have no command that detection could find.
 - ✅ **Git worktrees:** done in PRs #8 and #9. See plan-v1.md, "Git worktrees", decisions 26–30.
   - Each worktree's env file is pointed at its own port automatically (`SetEnvPort`).
   - Removed worktrees free their port, and their database stops counting as in use.
