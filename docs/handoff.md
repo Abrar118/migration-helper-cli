@@ -16,13 +16,13 @@ Last updated 2026-11-04. Read `CLAUDE.md` first, then this.
 | Worktree edges: env-file port wiring, env-mode warning, removal checks | merged (PR #9) |
 | `init --proxy` accepts a DB name written in compose, plus an e2e check; Windows path fixes | merged (PR #10) |
 | Handoff update after PR #10 | merged (PR #11) |
-| **Desktop app, first surface: All projects, plan proofs, Apply** | **branch `feat/desktop-app`.** Merge it before starting new work. |
+| Desktop app, first surface: All projects, plan proofs, Apply | merged (PR #12) |
 
 `main` is protected. Every PR needs one approval, including a code-owner review (`@Abrar118`). The owner can bypass the rules. Force-pushes and deletion are blocked.
 
 After every PR merge, update this file: the State table, the follow-ups, and the date.
 
-Stale remote branches were deleted on 2026-11-04. Only `main` is on the remote.
+Stale remote branches were deleted on 2026-11-04. Since then, the merged branches `docs/handoff-after-pr10` and `feat/desktop-app` are back on the remote.
 
 ## Getting going on a new machine
 
@@ -79,8 +79,10 @@ See plan-v1.md, "Local proxy (v2)", decisions 17–25.
 - **Visual system:** "Press Proof". Every plan is drawn as a press proof: crop marks, a colour bar with one patch per step, a slug line, and an "OK to apply" sign-off box.
 - **Where it's recorded:** the direction contract is in `.impeccable/surfaces/` and the tokens are in `DESIGN.md`. Read both before changing the UI.
 - **How it was chosen:** with the Impeccable skill, over two rounds. The first round was rejected as generic.
+  - Only the chosen sketch is kept: `.impeccable/mocks/decision/r2-pick.html`. The others were deleted.
+  - `.gitignore` keeps future sketches in that folder out of git.
 
-**Built (`feat/desktop-app`):**
+**Built (PR #12):**
 - **All projects (home):** every registered project read in parallel, the switch plan for the checked-out branch drawn as a proof, and Apply.
   - **Same plan only:** `apply_switch` builds the plan again and refuses if it differs from the one shown.
   - **Live progress:** the colour bar fills as `Applier` progress lines arrive.
@@ -89,6 +91,8 @@ See plan-v1.md, "Local proxy (v2)", decisions 17–25.
 - **Demo data:** `npm run dev` runs the UI alone with labelled demo data.
 - **Finish review:** passed with verdict `ship` after two fix rounds.
 
+**Next:** run `npm run tauri dev` against a real registry with Docker projects. This is the one unchecked item from PR #12; the app has only run on demo data.
+
 **Not built yet, in rough order:**
 - **Project view:** the two linked panes the user chose, git branches on the left and the DB branch tree (parent → child) on the right, with snapshots, worktrees, container status and commit history per branch.
 - **Plans for other operations:** create, snapshot, reset, delete, rename, gc.
@@ -96,7 +100,6 @@ See plan-v1.md, "Local proxy (v2)", decisions 17–25.
   - Nothing has rendered or reviewed that path yet, because a switch never drops anything.
 - **Starting the proxy automatically:** the app doesn't do it before planning, unlike the CLI (`autostart_proxy` lives in the CLI crate). In proxy mode with the proxy down, the app's plans stop the app instead of holding connections. Moving the start logic into the core would fix that.
 - **Design ceiling items from the finish review:** the in-sync, problem and settings sheets don't use the proof devices (colour bar, sign-off), and there's no registration target or tint ramp.
-- **Not run against real projects:** the app has only been run against demo data (no Docker on the build machine). `npm run tauri dev` against a real registry still needs a first run.
 - **Approval requests from the git hook** (v2).
 
 **Core gap found on the way:** `Workspace::annotate_schema` only looks at `RewriteEnv` steps, so proxy-mode switches never get a schema summary.
