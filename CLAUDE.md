@@ -113,7 +113,7 @@ Detection is a pure function of those models plus the repo files, so tests feed 
 - Plans use `Step::SetProxyTarget` instead of `RewriteEnv`.
 - When the proxy is running, copies use `HoldConnections` / `ReleaseConnections` (`Planner::push_pause` / `push_unpause`) instead of stopping the app. The hold file sits next to the target and expires.
 - Without a running proxy, plans stop the app and start only the services that were stopped.
-- The CLI and the hook start the proxy before planning (`autostart_proxy`, `routing.autostart`).
+- The CLI, the hook and the desktop app start the proxy before planning (`Workspace::proxy_needs_start` / `start_proxy`, `routing.autostart`). `start_proxy` runs the sidetrack binary it's given: the CLI passes itself, and the app looks for `sidetrack` next to itself, on PATH, then in `~/.cargo/bin`.
 - `sidetrack proxy --daemon` re-runs the binary in the background (pid and log in `.git/`); `--stop` kills it. `init --proxy` writes proxy-mode config (`RoutingConfig::use_proxy`).
 - Tests use a fake upstream (unit) and `tests/e2e/proxy.sh` (real Docker).
 

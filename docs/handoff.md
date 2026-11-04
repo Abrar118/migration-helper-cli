@@ -17,12 +17,14 @@ Last updated 2026-11-04. Read `CLAUDE.md` first, then this.
 | `init --proxy` accepts a DB name written in compose, plus an e2e check; Windows path fixes | merged (PR #10) |
 | Handoff update after PR #10 | merged (PR #11) |
 | Desktop app, first surface: All projects, plan proofs, Apply | merged (PR #12) |
+| Handoff update after PR #12 | merged (PR #13) |
+| Proxy-mode schema summary; the app starts the proxy like the CLI | **branch `feat/app-proxy-autostart`** |
 
 `main` is protected. Every PR needs one approval, including a code-owner review (`@Abrar118`). The owner can bypass the rules. Force-pushes and deletion are blocked.
 
 After every PR merge, update this file: the State table, the follow-ups, and the date.
 
-Stale remote branches were deleted on 2026-11-04. Since then, the merged branches `docs/handoff-after-pr10` and `feat/desktop-app` are back on the remote.
+Stale remote branches were deleted on 2026-11-04. Since then, the merged branches `docs/handoff-after-pr10`, `feat/desktop-app` and `docs/handoff-after-pr12` are back on the remote. The owner will clean them up later.
 
 ## Getting going on a new machine
 
@@ -51,7 +53,7 @@ See plan-v1.md, "Local proxy (v2)", decisions 17–25.
 - **Target:** the active DB branch is one line in `.git/sidetrack-proxy-target`. `switch` writes it with `Step::SetProxyTarget`.
 - **Rerouting:** the proxy swaps `database = routing.database` in the startup message, then relays bytes untouched.
 - **Moving connections:** a watcher closes the app's connections to the old database when the target changes.
-- **Restarts:** none. While the proxy runs, a copy of the active database holds the app's new connections in the proxy instead of stopping the app. Commands and the hook start the proxy automatically.
+- **Restarts:** none. While the proxy runs, a copy of the active database holds the app's new connections in the proxy instead of stopping the app. Commands, the hook and the desktop app start the proxy automatically.
 
 ### Proxy follow-ups
 
@@ -91,18 +93,19 @@ See plan-v1.md, "Local proxy (v2)", decisions 17–25.
 - **Demo data:** `npm run dev` runs the UI alone with labelled demo data.
 - **Finish review:** passed with verdict `ship` after two fix rounds.
 
-**Next:** run `npm run tauri dev` against a real registry with Docker projects. This is the one unchecked item from PR #12; the app has only run on demo data.
+**Run against real projects:** the owner ran `npm run tauri dev` against the real registry on 2026-11-04.
+
+**Starts the proxy (`feat/app-proxy-autostart`):** before reading a proxy-mode project with `routing.autostart` on, the app starts the proxy the same way the CLI does (`Workspace::proxy_needs_start` / `start_proxy`, now in the core). It runs the `sidetrack` CLI for that, looking next to the app, then on PATH, then in `~/.cargo/bin`. If that fails, the reason shows as a Query on the proof.
 
 **Not built yet, in rough order:**
 - **Project view:** the two linked panes the user chose, git branches on the left and the DB branch tree (parent → child) on the right, with snapshots, worktrees, container status and commit history per branch.
 - **Plans for other operations:** create, snapshot, reset, delete, rename, gc.
   - `Proof.tsx` already handles destructive plans: spot red, a confirm checkbox, the sign-off in spot.
   - Nothing has rendered or reviewed that path yet, because a switch never drops anything.
-- **Starting the proxy automatically:** the app doesn't do it before planning, unlike the CLI (`autostart_proxy` lives in the CLI crate). In proxy mode with the proxy down, the app's plans stop the app instead of holding connections. Moving the start logic into the core would fix that.
 - **Design ceiling items from the finish review:** the in-sync, problem and settings sheets don't use the proof devices (colour bar, sign-off), and there's no registration target or tint ramp.
 - **Approval requests from the git hook** (v2).
 
-**Core gap found on the way:** `Workspace::annotate_schema` only looks at `RewriteEnv` steps, so proxy-mode switches never get a schema summary.
+**Core gap, fixed on `feat/app-proxy-autostart`:** `Workspace::annotate_schema` only looked at `RewriteEnv` steps, so proxy-mode switches never got a schema summary. It now reads `SetProxyTarget` too (`schema_pair`, with a unit test).
 
 ## Later, per the spec
 

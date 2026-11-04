@@ -3,7 +3,7 @@
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
-use anyhow::{Context, Result};
+use anyhow::{bail, Context, Result};
 
 use crate::apply::Applier;
 use crate::compose::{docker_available, Compose};
@@ -196,6 +196,77 @@ impl Workspace {
         addr.parse::<std::net::SocketAddr>().is_ok_and(|a| {
             std::net::TcpStream::connect_timeout(&a, std::time::Duration::from_millis(300)).is_ok()
         })
+    }
+
+    /// Proxy mode with `routing.autostart` on and nothing listening: commands
+    /// should start the proxy before planning, so plans can hold connections
+    /// instead of stopping the app.
+    pub fn proxy_needs_start(&self) -> bool {
+        let r = &self.cfg.routing;
+        r.is_proxy() && r.autostart() && !self.proxy_running()
+    }
+
+    /// The background proxy's pid and log files, in this checkout's git dir.
+    pub fn proxy_files(&self) -> Result<(PathBuf, PathBuf)> {
+        Ok((
+            self.git.git_path("sidetrack-proxy.pid")?,
+            self.git.git_path("sidetrack-proxy.log")?,
+        ))
+    }
+
+    /// Run `<exe> -C <root> proxy` in the background (`exe` is the sidetrack
+    /// CLI) and wait until it accepts connections. Returns a line to show.
+    pub fn start_proxy(&self, exe: &Path, listen: Option<&str>) -> Result<String> {
+        let (pid_file, log_file) = self.proxy_files()?;
+        let log = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(&log_file)
+            .with_context(|| format!("opening {}", log_file.display()))?;
+        let mut cmd = std::process::Command::new(exe);
+        cmd.arg("-C").arg(&self.root).arg("proxy");
+        if let Some(l) = listen {
+            cmd.args(["--listen", l]);
+        }
+        cmd.stdin(std::process::Stdio::null())
+            .stdout(log.try_clone()?)
+            .stderr(log);
+        #[cfg(unix)]
+        {
+            // Its own process group, so Ctrl-C in the terminal (or the desktop
+            // app quitting) doesn't stop it.
+            use std::os::unix::process::CommandExt;
+            cmd.process_group(0);
+        }
+        let mut child = cmd.spawn().context("starting the proxy")?;
+        let addr = listen
+            .map(str::to_string)
+            .unwrap_or_else(|| self.proxy_listen());
+        let probe = addr.replace("0.0.0.0", "127.0.0.1");
+        for _ in 0..50 {
+            if let Some(status) = child.try_wait()? {
+                let text = std::fs::read_to_string(&log_file).unwrap_or_default();
+                let last = text.lines().last().unwrap_or("");
+                bail!(
+                    "the proxy stopped right away ({status}): {last}\nFull log: {}",
+                    log_file.display()
+                );
+            }
+            if std::net::TcpStream::connect(&probe).is_ok() {
+                std::fs::write(&pid_file, format!("{}\n", child.id()))?;
+                return Ok(format!(
+                    "Proxy running on {addr} (pid {}). Log: {}. Stop it with `sidetrack proxy --stop`.",
+                    child.id(),
+                    log_file.display()
+                ));
+            }
+            std::thread::sleep(std::time::Duration::from_millis(100));
+        }
+        let _ = child.kill();
+        bail!(
+            "the proxy didn't start listening on {addr}; see {}",
+            log_file.display()
+        )
     }
 
     /// Postgres as reached from this machine: `routing.upstream`, else the port
@@ -396,21 +467,9 @@ impl Workspace {
     /// target's tables and columns differ from the current ones. Best effort:
     /// any error just leaves the plan without a summary.
     pub fn annotate_schema(&self, plan: &mut Plan) {
-        if plan.kind != PlanKind::Switch {
-            return;
-        }
-        let Some((from, to)) = plan.steps.iter().find_map(|s| match s {
-            Step::RewriteEnv { from_db, to_db, .. } => Some((from_db.clone(), to_db.clone())),
-            _ => None,
-        }) else {
+        let Some((from, to)) = schema_pair(plan) else {
             return;
         };
-        let created_now = plan.steps.iter().any(|s| {
-            matches!(s, Step::CloneDatabase { target, .. } | Step::CreateEmptyDatabase { name: target } if *target == to)
-        });
-        if created_now {
-            return;
-        }
         if let (Ok(a), Ok(b)) = (self.pg.schema(&from), self.pg.schema(&to)) {
             plan.schema = Some(schema::diff(&from, &to, &a, &b));
         }
@@ -432,6 +491,24 @@ impl Workspace {
             proxy_hold: self.proxy_hold_path(),
         }
     }
+}
+
+/// The two databases a switch plan moves the app between, when both already
+/// exist: env mode rewrites the env file, proxy mode sets the proxy's target.
+fn schema_pair(plan: &Plan) -> Option<(String, String)> {
+    if plan.kind != PlanKind::Switch {
+        return None;
+    }
+    let (from, to) = plan.steps.iter().find_map(|s| match s {
+        Step::RewriteEnv { from_db, to_db, .. } | Step::SetProxyTarget { from_db, to_db, .. } => {
+            Some((from_db.clone(), to_db.clone()))
+        }
+        _ => None,
+    })?;
+    let created_now = plan.steps.iter().any(|s| {
+        matches!(s, Step::CloneDatabase { target, .. } | Step::CreateEmptyDatabase { name: target } if *target == to)
+    });
+    (!created_now).then_some((from, to))
 }
 
 pub fn compose_for(cfg: &Config, root: &Path) -> Compose {
@@ -470,5 +547,37 @@ mod tests {
         assert_eq!(d.total_bytes, 263174212 * 1024);
         assert_eq!(d.free_bytes, 188309384 * 1024);
         assert!(parse_df("garbage").is_none());
+    }
+
+    #[test]
+    fn schema_pair_covers_both_routing_modes() {
+        let pair = |a: &str, b: &str| Some((a.to_string(), b.to_string()));
+        let mut env = Plan::new(PlanKind::Switch, "");
+        env.push(Step::RewriteEnv {
+            file: ".env".into(),
+            variable: "DATABASE_URL".into(),
+            from_db: "main_db".into(),
+            to_db: "feat_db".into(),
+        });
+        assert_eq!(schema_pair(&env), pair("main_db", "feat_db"));
+
+        let mut proxy = Plan::new(PlanKind::Switch, "");
+        proxy.push(Step::SetProxyTarget {
+            database: "app_dev".into(),
+            from_db: "main_db".into(),
+            to_db: "feat_db".into(),
+        });
+        assert_eq!(schema_pair(&proxy), pair("main_db", "feat_db"));
+
+        // A database the plan creates has nothing to compare yet.
+        proxy.steps.insert(
+            0,
+            Step::CloneDatabase {
+                source: "main_db".into(),
+                target: "feat_db".into(),
+                size_bytes: 0,
+            },
+        );
+        assert_eq!(schema_pair(&proxy), None);
     }
 }

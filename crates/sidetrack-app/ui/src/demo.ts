@@ -26,8 +26,8 @@ const billingPlan: Plan = {
   notes: ["app_dev has every migration fix/invoice-rounding shares with main, so it's the closest base"],
 };
 
-// Env mode, switching to a DB branch that already exists: the only case where the
-// core adds a schema summary (`Workspace::annotate_schema`).
+// Env mode, switching to a DB branch that already exists, so the core adds a
+// schema summary (`Workspace::annotate_schema`; proxy-mode switches get one too).
 const shopPlan: Plan = {
   kind: "switch",
   summary: "Switch to feature_refunds_db",
