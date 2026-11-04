@@ -3,7 +3,7 @@ import { applySwitch } from "./api";
 import { bytes, gb, plural, seconds } from "./format";
 import { addedBytes, command, createsDatabase, describe, ink, isBookkeeping, isDestructive, label, meta, target, visibleSteps } from "./steps";
 import type { DiskSpace, Plan, ProjectView, Report } from "./types";
-import { Code, Slug } from "./text";
+import { Code, sentence, Slug } from "./text";
 
 type Phase =
   | { at: "review" }
@@ -33,6 +33,8 @@ export function Proof({ project, plan, disk, onStart, onClose }: Props) {
   const drops = plan.steps.filter(isDestructive).map((s) => (s.type === "drop_database" ? s.name : ""));
   const destructive = drops.length > 0;
   const records = plan.steps.filter(isBookkeeping).length;
+  // The project's own warnings (registry mismatches, a proxy that wouldn't start) first.
+  const queries = [...project.warnings.map(sentence), ...plan.warnings];
   const added = addedBytes(plan);
   const to = target(plan);
   const branch = project.git_branch ?? "this branch";
@@ -113,9 +115,9 @@ export function Proof({ project, plan, disk, onStart, onClose }: Props) {
           <p className="records">Also updates sidetrack's records ({records === 1 ? "1 entry" : `${records} entries`}).</p>
         )}
 
-        {(plan.warnings.length > 0 || plan.notes.length > 0) && (
+        {(queries.length > 0 || plan.notes.length > 0) && (
           <div className="queries">
-            {plan.warnings.map((w) => (
+            {queries.map((w) => (
               <p key={w} className="query"><strong>Query</strong> <Code text={w} /></p>
             ))}
             {plan.notes.map((n) => (

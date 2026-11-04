@@ -1036,13 +1036,6 @@ fn proxy(dir: &Path, listen: Option<String>) -> Result<bool> {
     Ok(true)
 }
 
-fn proxy_files(ws: &Workspace) -> Result<(PathBuf, PathBuf)> {
-    Ok((
-        ws.git.git_path("sidetrack-proxy.pid")?,
-        ws.git.git_path("sidetrack-proxy.log")?,
-    ))
-}
-
 /// `sidetrack proxy --daemon`: start the proxy in the background and wait until it listens.
 fn proxy_daemon(dir: &Path, listen: Option<String>) -> Result<bool> {
     let ws = Workspace::open(dir)?;
@@ -1054,79 +1047,31 @@ fn proxy_daemon(dir: &Path, listen: Option<String>) -> Result<bool> {
         println!("The proxy is already running on {}.", ws.proxy_listen());
         return Ok(true);
     }
-    println!("{}", start_proxy(&ws, listen.as_deref())?);
+    println!(
+        "{}",
+        ws.start_proxy(&std::env::current_exe()?, listen.as_deref())?
+    );
     Ok(true)
 }
 
 /// Proxy mode with autostart on: start the proxy before planning, so plans can
 /// hold connections instead of stopping the app. Never fails the command.
 pub(crate) fn autostart_proxy(ws: &Workspace) {
-    let r = &ws.cfg.routing;
-    if r.is_proxy() && r.autostart() && !ws.proxy_running() {
-        match start_proxy(ws, None) {
+    if ws.proxy_needs_start() {
+        let started = std::env::current_exe()
+            .map_err(anyhow::Error::from)
+            .and_then(|exe| ws.start_proxy(&exe, None));
+        match started {
             Ok(msg) => eprintln!("sidetrack: {msg}"),
             Err(e) => eprintln!("sidetrack: couldn't start the proxy: {e:#}"),
         }
     }
 }
 
-/// Start the proxy in the background and wait until it accepts connections.
-pub(crate) fn start_proxy(ws: &Workspace, listen: Option<&str>) -> Result<String> {
-    let (pid_file, log_file) = proxy_files(ws)?;
-    let log = std::fs::OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(&log_file)
-        .with_context(|| format!("opening {}", log_file.display()))?;
-    let mut cmd = std::process::Command::new(std::env::current_exe()?);
-    cmd.arg("-C").arg(&ws.root).arg("proxy");
-    if let Some(l) = listen {
-        cmd.args(["--listen", l]);
-    }
-    cmd.stdin(std::process::Stdio::null())
-        .stdout(log.try_clone()?)
-        .stderr(log);
-    #[cfg(unix)]
-    {
-        // Its own process group, so Ctrl-C in this terminal doesn't stop it.
-        use std::os::unix::process::CommandExt;
-        cmd.process_group(0);
-    }
-    let mut child = cmd.spawn().context("starting the proxy")?;
-    let addr = listen
-        .map(str::to_string)
-        .unwrap_or_else(|| ws.proxy_listen());
-    let probe = addr.replace("0.0.0.0", "127.0.0.1");
-    for _ in 0..50 {
-        if let Some(status) = child.try_wait()? {
-            let text = std::fs::read_to_string(&log_file).unwrap_or_default();
-            let last = text.lines().last().unwrap_or("");
-            bail!(
-                "the proxy stopped right away ({status}): {last}\nFull log: {}",
-                log_file.display()
-            );
-        }
-        if std::net::TcpStream::connect(&probe).is_ok() {
-            std::fs::write(&pid_file, format!("{}\n", child.id()))?;
-            return Ok(format!(
-                "Proxy running on {addr} (pid {}). Log: {}. Stop it with `sidetrack proxy --stop`.",
-                child.id(),
-                log_file.display()
-            ));
-        }
-        std::thread::sleep(std::time::Duration::from_millis(100));
-    }
-    let _ = child.kill();
-    bail!(
-        "the proxy didn't start listening on {addr}; see {}",
-        log_file.display()
-    )
-}
-
 /// `sidetrack proxy --stop`.
 fn proxy_stop(dir: &Path) -> Result<bool> {
     let ws = Workspace::open(dir)?;
-    let (pid_file, _) = proxy_files(&ws)?;
+    let (pid_file, _) = ws.proxy_files()?;
     let Ok(pid) = std::fs::read_to_string(&pid_file) else {
         if ws.proxy_running() {
             bail!(

@@ -2,7 +2,7 @@
 //! unchanged (their JSON format is the stable contract); the rest is a summary
 //! of `World` per project.
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use anyhow::Result;
 use serde::Serialize;
@@ -80,6 +80,19 @@ fn project_view(root: &str) -> (ProjectView, Option<DiskSpace>) {
         Ok(ws) => ws,
         Err(e) => return (unreadable(root, &format!("{e:#}")), None),
     };
+    // Like the CLI: start the proxy before planning, so the plan holds
+    // connections instead of stopping the app.
+    let start_failed = ws.proxy_needs_start().then(|| match sidetrack_exe() {
+        Some(exe) => ws
+            .start_proxy(&exe, None)
+            .err()
+            .map(|e| format!("couldn't start the proxy: {e:#}")),
+        None => Some(
+            "the proxy isn't running, and the `sidetrack` CLI isn't on PATH to start it; \
+             run `sidetrack proxy --daemon` in the project"
+                .to_string(),
+        ),
+    });
     let r = &ws.cfg.routing;
     let mut view = ProjectView {
         mode: r.mode.clone(),
@@ -107,6 +120,7 @@ fn project_view(root: &str) -> (ProjectView, Option<DiskSpace>) {
         .map(|(db, wt)| (db.clone(), tilde(wt)))
         .collect();
     view.warnings = planner.reconcile();
+    view.warnings.extend(start_failed.flatten());
     if let Some(b) = &view.git_branch {
         view.migrations = planner.migration_status(b).ok().flatten();
     }
@@ -127,6 +141,28 @@ pub fn switch_plan(ws: &Workspace, world: &World) -> Result<Option<Plan>> {
     let mut plan = ws.planner(world).switch(&branch)?;
     ws.annotate_schema(&mut plan);
     Ok(Some(plan))
+}
+
+/// The sidetrack CLI, which runs the proxy: next to this app, then on PATH,
+/// then in `~/.cargo/bin` (apps opened from a desktop often get a shorter PATH
+/// than the terminal).
+fn sidetrack_exe() -> Option<PathBuf> {
+    let name = format!("sidetrack{}", std::env::consts::EXE_SUFFIX);
+    let beside = std::env::current_exe()
+        .ok()
+        .and_then(|e| e.parent().map(Path::to_path_buf));
+    let path = std::env::var_os("PATH")
+        .map(|p| std::env::split_paths(&p).collect::<Vec<_>>())
+        .unwrap_or_default();
+    let cargo = std::env::var_os("HOME")
+        .or_else(|| std::env::var_os("USERPROFILE"))
+        .map(|h| PathBuf::from(h).join(".cargo").join("bin"));
+    beside
+        .into_iter()
+        .chain(path)
+        .chain(cargo)
+        .map(|dir| dir.join(&name))
+        .find(|f| f.is_file())
 }
 
 /// `/home/me/code/shop` → `~/code/shop`.
