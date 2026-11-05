@@ -33,7 +33,7 @@ Last updated 2026-11-05. Read `CLAUDE.md` first, then this.
 | Desktop app: Add project (init from the app); init and hook install in the core | merged (PR #27) |
 | Desktop app: collapsible column; a plain error when a project's folder is gone | merged (PR #28, through #27's branch) |
 | Showcase screenshots in `public/`; Vite pre-bundles the Tauri modules | merged (PR #29) |
-| **Desktop app: a second look, "Canvas" (sidebar of sections, node canvases, drag and drop); host-drive disk space under Docker Desktop** | **pushed as branch `feat/app-canvas-look`, no PR yet** (see "The Canvas look" below) |
+| **Desktop app: a second look, "Canvas" (sidebar of sections, node canvases, drag and drop); host-drive disk space under Docker Desktop** | **open as PR #30** (branch `feat/app-canvas-look`) (see "The Canvas look" below) |
 
 `main` is protected. Every PR needs one approval, including a code-owner review (`@Abrar118`). The owner can bypass the rules. Force-pushes and deletion are blocked.
 
@@ -117,7 +117,7 @@ A second look, picked in Settings → Look; Press Proof stays the default and is
 **Checked:** fmt, clippy (workspace and app), all tests, the UI build; the Impeccable detector on the changed files; screenshots of every section in light and dark, in the browser demo and in the real app against `D:\Demo-showcase` (real Docker and Postgres, nothing applied); `sidetrack doctor` there reads 77.4 GB free of 291.8 GB (drive C:) instead of 950 GB. The owner checked drag and drop by hand.
 
 **Left to do:**
-- Open the PR for `feat/app-canvas-look` (needs the owner's approval as code owner).
+- Review and merge PR #30 (needs the owner's approval as code owner), then update this file.
 - Retake `public/screenshots/canvas/real*` now that disk space is fixed (`node crates/sidetrack-app/scripts/screenshots.mjs app <dir>` while the app runs with WebView2 remote debugging; see the script's header).
 - The macOS Docker Desktop path in `desktop_disk_dirs` (`~/Library/Containers/com.docker.docker/Data/vms/0/data`) is untested; Colima and OrbStack aren't detected.
 - No Apply has been run from the Canvas look against a real database yet (the plans and Apply are the same code as Press Proof's).
