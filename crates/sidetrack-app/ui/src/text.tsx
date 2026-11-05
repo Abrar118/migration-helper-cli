@@ -1,17 +1,27 @@
-import { Fragment } from "react";
+import { Fragment, type ReactNode } from "react";
+
+/**
+ * Items joined with " · ", each kept on one line. A line can only break after
+ * a dot, so a path or a name is never split and no line starts with a dot.
+ */
+export function Units({ items }: { items: ReactNode[] }) {
+  return (
+    <>
+      {items.map((item, i) => (
+        <Fragment key={i}>
+          <span className="nw">{item}</span>
+          {i < items.length - 1 && " · "}
+        </Fragment>
+      ))}
+    </>
+  );
+}
 
 /** A typed slug line: items separated by dots, each kept on one line, never cut off. */
 export function Slug({ items, className = "" }: { items: (string | null | false | undefined)[]; className?: string }) {
-  const shown = items.filter((i): i is string => Boolean(i));
   return (
     <p className={`slug ${className}`}>
-      {shown.map((item, i) => (
-        // The separator sits outside the nowrap span, so lines can break between items.
-        <Fragment key={item}>
-          <span className="nw">{item}</span>
-          {i < shown.length - 1 && " · "}
-        </Fragment>
-      ))}
+      <Units items={items.filter((i): i is string => Boolean(i))} />
     </p>
   );
 }
