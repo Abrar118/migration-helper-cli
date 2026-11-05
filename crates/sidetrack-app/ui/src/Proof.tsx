@@ -110,7 +110,7 @@ export function Proof({ root, name, op, plan, title, warnings = [], disk, freed 
   const total = report?.timings.reduce((n, t) => n + t.seconds, 0) ?? 0;
   const slug = [
     name,
-    plan.kind,
+    plan.kind.replace(/_/g, " "),
     plural(steps.length, "step"),
     added > 0 ? `+${bytes(added)}` : "no copy",
     destructive ? `drops ${plural(drops.length, "database")}` : "nothing destructive",

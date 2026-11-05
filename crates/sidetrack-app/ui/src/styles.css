@@ -340,6 +340,8 @@ code, .nw { white-space: nowrap; }
 .snaps { list-style: none; padding: 2px 16px 8px; font-size: 14px; color: var(--soft); }
 .snaps li { padding: 2px 0; overflow-wrap: anywhere; }
 .snap-name { font-weight: 600; color: var(--ink); }
+.snap-action { margin-left: 18px; }
+.snap-action .text-button { font-size: 14px; }
 
 .tree-empty { margin-top: 12px; }
 .slug.tree-slug { margin: 28px 0 0; }
@@ -368,7 +370,7 @@ code, .nw { white-space: nowrap; }
   font-size: 17px;
   padding: 0 12px;
 }
-.inline-field input { flex: 1; }
+.inline-field input, .field-row select { flex: 1; }
 .inline-field input.db { font-family: var(--mono); font-size: 17px; }
 .inline-field .secondary { flex: none; }
 .secondary:disabled { background: var(--paper); color: var(--soft); border-color: var(--rule); }

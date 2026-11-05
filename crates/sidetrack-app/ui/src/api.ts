@@ -1,4 +1,4 @@
-import type { Op, Overview, Plan, ProjectDetail, Report } from "./types";
+import type { Op, Overview, Plan, Planned, ProjectDetail, Report } from "./types";
 import { demoApply, demoDetail, demoOverview, demoPlan } from "./demo";
 
 /** Inside the Tauri window; otherwise (plain `vite` in a browser) demo data is used. */
@@ -17,11 +17,14 @@ export async function loadDetail(root: string): Promise<ProjectDetail> {
   return invoke<ProjectDetail>("project_detail", { root });
 }
 
-/** The plan for `op` on the project at `root`, as the CLI would show it. */
-export async function planOp(root: string, op: Op): Promise<Plan> {
-  if (!inApp) return demoPlan(root, op);
+/**
+ * The plan for `op` on the project at `root`, as the CLI would show it, with
+ * any problem met on the way (the proxy wouldn't start) as `warnings`.
+ */
+export async function planOp(root: string, op: Op): Promise<Planned> {
+  if (!inApp) return { plan: await demoPlan(root, op), warnings: [] };
   const { invoke } = await import("@tauri-apps/api/core");
-  return invoke<Plan>("plan_op", { root, op });
+  return invoke<Planned>("plan_op", { root, op });
 }
 
 /**

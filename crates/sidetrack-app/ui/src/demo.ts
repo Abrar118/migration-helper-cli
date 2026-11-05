@@ -340,6 +340,15 @@ export async function demoPlan(root: string, op: Op): Promise<Plan> {
       ], d.warnings);
     }
 
+    case "snapshot_remove": {
+      const s = d.db_branches.flatMap((b) => b.snapshots).find((s) => s.db_name === op.name || s.label === op.name);
+      if (!s) return refuse(`no DB branch or snapshot called ${op.name}`);
+      return plan("snapshot_remove", `Delete snapshot ${s.db_name}`, [
+        ...(s.on_server !== false ? [{ type: "drop_database", name: s.db_name } as Step] : []),
+        { type: "forget_snapshot", db_name: s.db_name },
+      ]);
+    }
+
     case "reset": {
       if (!active) return refuse("can't read the active database");
       const source = op.to ?? (op.parent ? active.parent : active.snapshots[0]?.db_name ?? active.parent);

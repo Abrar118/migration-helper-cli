@@ -16,7 +16,7 @@ use sidetrack_core::registry::{self, Registry};
 use sidetrack_core::workspace::Workspace;
 use tauri::{AppHandle, Emitter, Manager, UserAttentionType};
 
-use crate::ops::Op;
+use crate::ops::{Op, Planned};
 use crate::views::{Overview, ProjectDetail};
 
 /// Every registered project with its current state and, when it's out of sync,
@@ -35,16 +35,16 @@ async fn project_detail(root: String) -> Result<ProjectDetail, String> {
 
 /// The plan for `op` on the project at `root`. Like the CLI, it starts the
 /// proxy first (proxy mode with autostart), so copies hold connections instead
-/// of stopping the app.
+/// of stopping the app. If the proxy won't start, the reason comes back with
+/// the plan, to show as a Query.
 #[tauri::command]
-async fn plan_op(root: String, op: Op) -> Result<Plan, String> {
+async fn plan_op(root: String, op: Op) -> Result<Planned, String> {
     blocking(move || {
         let ws = Workspace::open(root.as_ref())?;
-        if let Some(problem) = views::autostart(&ws) {
-            eprintln!("sidetrack: {problem}");
-        }
+        let warnings = views::autostart(&ws).into_iter().collect();
         let world = ws.world()?;
-        ops::plan(&ws, &world, &op)
+        let plan = ops::plan(&ws, &world, &op)?;
+        Ok(Planned { plan, warnings })
     })
     .await
 }

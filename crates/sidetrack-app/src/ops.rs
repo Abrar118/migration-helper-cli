@@ -2,7 +2,7 @@
 //! way the matching CLI command does (`plan_command` in `crates/sidetrack`).
 
 use anyhow::{Context, Result};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use sidetrack_core::plan::Plan;
 use sidetrack_core::planner::{ResetTo, World};
 use sidetrack_core::workspace::Workspace;
@@ -24,7 +24,10 @@ pub enum Op {
     },
     /// Snapshot the active database (`sidetrack snapshot [label]`).
     Snapshot { label: Option<String> },
+    /// `sidetrack snapshot rm <name>`: a snapshot's database name or label.
+    SnapshotRemove { name: String },
     /// Reset the active database (`sidetrack reset [--to <to>] [--parent]`).
+    /// `to` is any snapshot in the project, by database name or label.
     Reset {
         to: Option<String>,
         #[serde(default)]
@@ -36,6 +39,15 @@ pub enum Op {
     Rename { old: String, new: String },
     /// `sidetrack gc`.
     Gc,
+}
+
+/// A plan for the frontend, with problems met while planning that aren't part
+/// of the plan itself (the proxy wouldn't start). `apply_op` compares only the
+/// plan, so these never make it refuse.
+#[derive(Debug, Serialize)]
+pub struct Planned {
+    pub plan: Plan,
+    pub warnings: Vec<String>,
 }
 
 /// The plan the CLI would show for `op`.
@@ -60,6 +72,7 @@ pub fn plan(ws: &Workspace, world: &World, op: &Op) -> Result<Plan> {
             let seq = ws.reg.next_snapshot_seq(branch.id)?;
             planner.snapshot(label.as_deref(), seq)
         }
+        Op::SnapshotRemove { name } => planner.snapshot_remove(name),
         Op::Reset { to, parent } => planner.reset(&match (to, parent) {
             (Some(n), _) => ResetTo::Snapshot(n.clone()),
             (None, true) => ResetTo::Parent,
@@ -95,6 +108,12 @@ mod tests {
             op(r#"{"op":"snapshot","label":"before"}"#),
             Op::Snapshot {
                 label: Some("before".into())
+            }
+        );
+        assert_eq!(
+            op(r#"{"op":"snapshot_remove","name":"a_db__s2"}"#),
+            Op::SnapshotRemove {
+                name: "a_db__s2".into()
             }
         );
         assert_eq!(
