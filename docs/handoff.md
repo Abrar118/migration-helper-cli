@@ -30,7 +30,7 @@ Last updated 2026-11-05. Read `CLAUDE.md` first, then this.
 | Handoff update after PR #23 | merged (PR #24) |
 | Desktop app: reset to any snapshot, delete a snapshot, proxy-start problems on the proof | merged (PR #25) |
 | Handoff update after PR #25 | merged (PR #26) |
-| **Desktop app: Add project (init from the app); init and hook install in the core** | **this PR** |
+| **Desktop app: Add project (init from the app); init and hook install in the core** | **open as PR #27** |
 
 `main` is protected. Every PR needs one approval, including a code-owner review (`@Abrar118`). The owner can bypass the rules. Force-pushes and deletion are blocked.
 
@@ -132,7 +132,7 @@ See plan-v1.md, "Local proxy (v2)", decisions 17–25.
 - Not checked yet: the whole loop from a GUI client into the UI.
 - Gaps: while a project is open in the project view, the app only refreshes; if it's the same project, "See the switch plan" appears. A linked worktree's checkout only prints the hint.
 
-**Add project (this PR):** "Add project" in the column (and on the empty screen) picks a folder and shows what `init` found as a proof: database, routing variable, migrations, checked-out branch, and the `sidetrack.toml` it writes. It can start the database, and the git hook is opt-out. See plan-v1.md, decisions 39–41.
+**Add project (PR #27):** "Add project" in the column (and on the empty screen) picks a folder and shows what `init` found as a proof: database, routing variable, migrations, checked-out branch, and the `sidetrack.toml` it writes. It can start the database, and the git hook is opt-out. See plan-v1.md, decisions 39–41.
 - **Moved to the core:** `init::Setup` and `sidetrack_core::hook`. The CLI's `init` now checks that the database is running before writing `sidetrack.toml`.
 - **Also fixed:**
   - A switch that only runs migrations used to read "should switch to" with no name, and "The app will use ?". It now reads as migrations to run.
