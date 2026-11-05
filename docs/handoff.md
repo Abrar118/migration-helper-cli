@@ -12,7 +12,7 @@ Last updated 2026-11-05. Read `CLAUDE.md` first, then this.
 - Razorbill's `docker-compose-dev.yml` passes a read-only proxy setup preview; no Razorbill files or databases were modified. Its generated `flyway migrate` command still needs validation: the app bundles Flyway in Spring Boot, rather than providing a standalone Flyway executable. No real switch was applied there.
 - Verification: 93 workspace tests (88 core, 2 CLI integration, 3 app) with a dedicated Postgres container, both Clippy checks, formatting, UI/native builds; browser smoke checks of ordered override selection/reordering/removal, migration-command notices, custom proxy ports, proxy confirmation, database start, rereview and Add in Press Proof/light and Canvas/dark. Native file-dialog interaction and real Razorbill Apply remain untested.
 
-## Inline compose URL fallback (branch fix/inline-url-suggest)
+## Inline compose URL fallback (merged PR #34)
 
 - When the database URL is written directly in compose `environment:` (Razorbill's dev file), env-mode setup no longer stops at "write sidetrack.toml by hand". It names the one-line edit: the new value only (`<url with ${DB_NAME:-<current db>}>`), so it fits both `KEY=value` and `KEY: value` compose files, plus `DB_NAME=<current db>` in the untracked `.env`. If `.env` sets that name to another database, any value in Compose's raw output references it (`environment:`, `command:`, `healthcheck:`, top-level `secrets:`, …), or it's exported in sidetrack's own environment (an export overrides `.env`, so later switches wouldn't take effect), it tries `SIDETRACK_DB_NAME`, then `SIDETRACK_DB_NAME_2`, and so on. Limit: the desktop app started from Finder doesn't see variables exported in the user's shell profile; the CLI does. The default keeps the current database wherever the variable isn't set. CLI init and Add project show the same message; Add project's error sheet has **Check again**.
 - Decided: sidetrack only writes untracked files. Tracked edits are suggested for the user to make and commit. Sidetrack-owned Compose overrides, a rename swap, proxy changes, a `pg_stat_activity` drift check and AI discovery are all out of scope for now.
@@ -24,7 +24,7 @@ Last updated 2026-11-05. Read `CLAUDE.md` first, then this.
 - The published Tiny Recursive Model (TRM) was considered; its demonstrated puzzle tasks do not establish repository/configuration discovery capability. A small pretrained code-language model was suggested as an alternative to evaluate, not selected. Any future discovery output still needs deterministic validation and the existing plan/review/apply safeguards.
 - Separately deferred: keeping project files untouched through Sidetrack-owned external Compose overrides and external configuration storage. This is not implemented; current Sidetrack still expects sidetrack.toml inside the repository. Do not fold this into the AI work without discussing scope.
 - Remaining review items from PR #32 were intentionally left outside the second follow-up: localhost false-positive exposure warnings, exposure warnings remaining advisory, missing standalone-proxy/post-add network notices, upstream-normalization test coverage, duplicate port extraction and duplicate override entries.
-- Local testing uses OrbStack on macOS. The throwaway project is `../sidetrack-playground`, with main, feature/orders and feature/notes, its own registry, and install-cli.sh / run-app.sh / start.sh. Razorbill files and databases were not changed; its Spring Boot/Flyway migration command remains unvalidated before real Apply.
+- Local testing uses OrbStack on macOS. On 2026-11-05, the owner requested removal of the throwaway setup: `../sidetrack-playground` (including its registry and scripts), its two containers, named and anonymous volumes, network, `postgres:16-alpine` image, and temporary Sidetrack review files are gone. Docker reports about 460 MB less usage; roughly 7 MB of local files were also removed. Razorbill and other projects' Docker resources were preserved. A future smoke test needs a new disposable project; Razorbill's Spring Boot/Flyway migration command remains unvalidated before real Apply.
 
 ## State
 
@@ -60,6 +60,8 @@ Last updated 2026-11-05. Read `CLAUDE.md` first, then this.
 | Desktop app: a second look, "Canvas" (sidebar of sections, node canvases, drag and drop); host-drive disk space under Docker Desktop | merged (PR #30) |
 | Handoff update after PR #30 | merged (PR #31) |
 | Compose environment formats, explicit Compose files, guided proxy setup and review fixes | merged (PR #32) |
+| Handoff after PR #32 and remaining workspace files | merged (PR #33) |
+| Inline Compose URL edit guidance, retry and variable-collision checks | merged (PR #34) |
 
 `main` is protected. Every PR needs one approval, including a code-owner review (`@Abrar118`). The owner can bypass the rules. Force-pushes and deletion are blocked.
 
