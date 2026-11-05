@@ -26,7 +26,7 @@ Last updated 2026-11-05. Read `CLAUDE.md` first, then this.
 | Handoff update after PRs #15–#17 | merged (PR #21) |
 | TLS between the app and the proxy | merged (PR #19) |
 | Handoff update after PRs #19–#21 | merged (PR #22) |
-| **Approvals from the git hook: with no TTY, the hook tells the open app, which shows the switch proof** | **this PR** |
+| **Approvals from the git hook: with no TTY, the hook tells the open app, which shows the switch proof** | **open as PR #23** |
 
 `main` is protected. Every PR needs one approval, including a code-owner review (`@Abrar118`). The owner can bypass the rules. Force-pushes and deletion are blocked.
 
@@ -118,7 +118,7 @@ See plan-v1.md, "Local proxy (v2)", decisions 17–25.
 
 **Still to check on a real machine** (owner, `npm run tauri dev`): the project view, including a project with the db container stopped and one with a linked worktree; applying a delete and a reset; an `sslmode=require` app through the proxy; with the app open, check out a branch in a GUI git client and approve the switch in the app.
 
-**Approvals from the git hook (this PR):** a checkout with no TTY (a GUI git client) whose plan isn't auto-approved sends the project's root to the app over localhost (`notify.rs`, port in `app.port` next to the registry). The app selects that project, shows its switch proof and flashes the taskbar. The hook doesn't wait, and its line says the plan is waiting in the app. See plan-v1.md, decisions 36–38.
+**Approvals from the git hook (PR #23):** a checkout with no TTY (a GUI git client) whose plan isn't auto-approved sends the project's root to the app over localhost (`notify.rs`, port in `app.port` next to the registry). The app selects that project, shows its switch proof and flashes the taskbar. The hook doesn't wait, and its line says the plan is waiting in the app. See plan-v1.md, decisions 36–38.
 - Checked: `notify::tests`, plus the built app on a temp registry answering `ok` for a registered root and `no` for another.
 - Not checked yet: the whole loop from a GUI client into the UI.
 - Gaps: while a project is open in the project view, the app only refreshes; if it's the same project, "See the switch plan" appears. A linked worktree's checkout only prints the hint.
