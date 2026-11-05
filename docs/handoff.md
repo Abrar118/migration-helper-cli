@@ -28,7 +28,7 @@ Last updated 2026-11-05. Read `CLAUDE.md` first, then this.
 | Handoff update after PRs #19–#21 | merged (PR #22) |
 | Approvals from the git hook: with no TTY, the hook tells the open app, which shows the switch proof | merged (PR #23) |
 | Handoff update after PR #23 | merged (PR #24) |
-| **Desktop app: reset to any snapshot, delete a snapshot, proxy-start problems on the proof** | **this PR** |
+| **Desktop app: reset to any snapshot, delete a snapshot, proxy-start problems on the proof** | **open as PR #25** |
 
 `main` is protected. Every PR needs one approval, including a code-owner review (`@Abrar118`). The owner can bypass the rules. Force-pushes and deletion are blocked.
 
@@ -113,7 +113,7 @@ See plan-v1.md, "Local proxy (v2)", decisions 17–25.
 **Project view (PR #16):** "Open project" on All projects. Git branches on the left (checked-out first, last 5 commits under the selected one, container status at the foot); the DB branch tree on the right (parent → child, snapshots, which worktree uses each DB, DBs whose git branch is gone or that aren't on the server). Selecting either side selects its partner. Built by a subagent inside the existing Press Proof contract, without a new sketch round.
 
 **Plans for other operations (PR #17):** `ops.rs` adds `plan_op` / `apply_op` keyed by an `Op` enum (switch, create, snapshot, reset, delete, rename, gc), mirroring the CLI's `plan_command`; `apply_switch` is folded in. Actions sit on the selected DB node, on a git branch with no DB (create), and "Clean up" (gc) in the lead. Destructive plans render for the first time: drops in spot, Apply disabled until the plan-worded checkbox is ticked.
-- The gaps listed here were closed in the PR after #24:
+- The gaps listed here are closed in PR #25:
   - **Reset:** opens a picker with the parent and every snapshot in the project, like `reset --to`.
   - **`snapshot rm`:** each snapshot of the selected node has a Delete.
   - **Proxy-start problems:** if `plan_op` can't start the proxy, the reason is a Query on the proof (`ops::Planned`).
