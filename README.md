@@ -151,6 +151,7 @@ services:
 - **Other databases:** connections to any other name pass through unchanged.
 - **Encryption:** the proxy accepts TLS, so `sslmode=prefer` (the default) and `require` both work. It uses a self-signed certificate that sidetrack creates once per machine, next to its registry (`proxy-tls.pem`, e.g. `~/.local/share/sidetrack/` on Linux). For `verify-full`, point `sslrootcert` at that file; it is valid for `localhost`, `127.0.0.1` and `host.docker.internal`. The proxy talks to Postgres without TLS.
 - **Listener and network access:** generated proxy setups use loopback on macOS and Windows. Linux setups with app containers select `0.0.0.0:54320` (a specific Docker bridge address can be configured instead). A non-loopback listener may accept connections from other machines on your network. Sidetrack adds no authentication; Postgres authentication and your firewall control access. `init` and Add project warn when the listener is not loopback.
+- **Listener selection limits:** the default follows the OS running Sidetrack, not the Docker daemon's OS. It assumes a local Docker setup, so Docker Desktop on Linux also gets the Linux default; no bridge address is discovered automatically. For custom local networking, set `routing.listen` and `routing.upstream` explicitly, preferring a specific reachable bridge address over all interfaces where possible. Remote Docker daemons (`DOCKER_HOST` or remote contexts) are outside the supported local-development setup.
 - **Container access:** `host.docker.internal` reaching host loopback was verified on macOS with OrbStack; Docker Desktop on macOS/Windows has not been tested here. If your runtime cannot reach loopback, configure a reachable address in `routing.listen` and restart the proxy. On native Linux, containers also need `host.docker.internal:host-gateway` in `extra_hosts`.
 
 ### Git worktrees
@@ -179,6 +180,8 @@ Detected migration tools: Alembic, Django, Prisma, Rails, Flyway and Knex. Anyth
 **Add project** (in the column, or on the empty screen) adds a repository from the app: pick its folder and the app shows what `sidetrack init` would set up. That's the database, the variable it rewrites, the migration tool and the `sidetrack.toml` it writes. It can start the database if it isn't running, and can install the git hook.
 
 Add project also offers **Choose Compose file**, **Add override file** (with merge-order controls), and **Use proxy routing**, including when the default setup can't be read. Proxy setup shows the host, port and database to configure in your app; preserve any JDBC prefix, credentials and URL options. Add the project to save its setup and start the proxy, then update the app connection and recreate its containers. The database must publish a port for the proxy, or have `routing.upstream` configured. Existing `sidetrack.toml` settings take precedence.
+
+Compose files outside the repository, or reached through some symlinked paths, may be stored as absolute paths. Both `init` and Add project warn that these paths are machine-specific. They remain supported, including with `--yes`; use relative paths when sharing `sidetrack.toml` with teammates.
 
 The column on the left folds away with the button before the wordmark, or Ctrl+B (⌘B on a Mac), to give the plan the whole window.
 

@@ -615,6 +615,10 @@ fn detect_migrations(
     })
 }
 
+fn container_listen(linux_host: bool, has_containers: bool) -> Option<&'static str> {
+    (linux_host && has_containers).then_some("0.0.0.0:54320")
+}
+
 impl Detection {
     /// Turn findings into a config. `user` must be known (resolve `user_file` first).
     /// With `proxy`, a DB name written directly in compose is fine: the app keeps
@@ -696,9 +700,9 @@ impl Detection {
         };
         if proxy {
             cfg.routing.use_proxy(&self.active_db);
-            if cfg!(target_os = "linux") && !cfg.routing.restart.is_empty() {
-                cfg.routing.listen = Some("0.0.0.0:54320".into());
-            }
+            cfg.routing.listen =
+                container_listen(cfg!(target_os = "linux"), !cfg.routing.restart.is_empty())
+                    .map(str::to_owned);
         }
         Ok(cfg)
     }
@@ -771,6 +775,18 @@ impl Detection {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn container_listener_choice_covers_all_host_and_container_combinations() {
+        for (linux, containers, expected) in [
+            (false, false, None),
+            (false, true, None),
+            (true, false, None),
+            (true, true, Some("0.0.0.0:54320")),
+        ] {
+            assert_eq!(container_listen(linux, containers), expected);
+        }
+    }
 
     fn model(json: &str) -> ComposeModel {
         ComposeModel::from_json(json).unwrap()

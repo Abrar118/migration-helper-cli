@@ -140,6 +140,11 @@ pub struct ComposeConfig {
 }
 
 impl ComposeConfig {
+    pub fn portability_warning(&self) -> Option<&'static str> {
+        self.files.iter().any(|file| Path::new(file).is_absolute())
+            .then_some("This setup stores absolute Compose paths in sidetrack.toml. They preserve your selected files but may not work on another machine.")
+    }
+
     fn is_default(&self) -> bool {
         self == &Self::default()
     }
@@ -225,6 +230,22 @@ impl Config {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn compose_portability_warning_for_absolute_paths_only() {
+        let mut compose = ComposeConfig::default();
+        assert!(compose.portability_warning().is_none());
+        compose.files = vec!["compose.yml".into(), "./infra/dev.yml".into()];
+        assert!(compose.portability_warning().is_none());
+        compose.files.push(
+            std::env::current_dir()
+                .unwrap()
+                .join("dev.yml")
+                .display()
+                .to_string(),
+        );
+        assert!(compose.portability_warning().is_some());
+    }
 
     #[test]
     fn proxy_warning_only_for_non_loopback_listeners() {

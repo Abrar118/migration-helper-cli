@@ -1,10 +1,6 @@
 use std::process::Command;
 
-#[test]
-fn compose_files_are_relative_to_the_command_directory() {
-    if !sidetrack_core::compose::docker_available() {
-        return;
-    }
+fn project_fixture() -> tempfile::TempDir {
     let dir = tempfile::tempdir().unwrap();
     let root = dir.path().canonicalize().unwrap();
     let infra = root.join("infra");
@@ -36,6 +32,17 @@ services:
     )
     .unwrap();
     std::fs::create_dir_all(root.join("alembic/versions")).unwrap();
+    dir
+}
+
+#[test]
+fn compose_files_are_relative_to_the_command_directory() {
+    if !sidetrack_core::compose::docker_available() {
+        return;
+    }
+    let dir = project_fixture();
+    let root = dir.path().canonicalize().unwrap();
+    let infra = root.join("infra");
     for (cwd, args) in [(&infra, vec![]), (&root, vec!["-C", "infra"])] {
         let output = Command::new(env!("CARGO_BIN_EXE_sidetrack"))
             .current_dir(cwd)
@@ -51,4 +58,31 @@ services:
         assert!(String::from_utf8_lossy(&output.stdout).contains("infra/dev.yml"));
         assert!(!root.join("sidetrack.toml").exists());
     }
+}
+
+#[test]
+fn external_compose_paths_warn_even_with_yes() {
+    if !sidetrack_core::compose::docker_available() {
+        return;
+    }
+    let dir = project_fixture();
+    let root = dir.path().canonicalize().unwrap();
+    let external = tempfile::tempdir().unwrap();
+    let file = external.path().join("dev.yml");
+    std::fs::copy(root.join("infra/dev.yml"), &file).unwrap();
+    std::fs::copy(root.join("infra/.env"), external.path().join(".env")).unwrap();
+    let output = Command::new(env!("CARGO_BIN_EXE_sidetrack"))
+        .current_dir(&root)
+        .args(["init", "-f"])
+        .arg(&file)
+        .args(["--yes", "--dry-run", "--no-hook"])
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(String::from_utf8_lossy(&output.stderr).contains("absolute Compose paths"));
+    assert!(!root.join("sidetrack.toml").exists());
 }

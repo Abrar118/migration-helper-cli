@@ -40,14 +40,8 @@ fn setup_warnings(setup: &Setup) -> Vec<String> {
     if let Some(warning) = setup.cfg.routing.network_warning() {
         warnings.push(warning.into());
     }
-    if setup
-        .cfg
-        .compose
-        .files
-        .iter()
-        .any(|file| Path::new(file).is_absolute())
-    {
-        warnings.push("This setup stores absolute Compose paths in sidetrack.toml. They preserve your selected files but may not work on another machine.".into());
+    if let Some(warning) = setup.cfg.compose.portability_warning() {
+        warnings.push(warning.into());
     }
     if setup
         .detected

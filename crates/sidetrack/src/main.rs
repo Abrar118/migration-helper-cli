@@ -308,6 +308,9 @@ fn init(
         .map(|file| command_dir.join(file).to_string_lossy().into_owned())
         .collect();
     let setup = Setup::read(dir, main_branch, proxy, compose_files)?;
+    if let Some(warning) = setup.cfg.compose.portability_warning() {
+        eprintln!("Warning: {warning}");
+    }
     match &setup.detected {
         None => {
             println!(
