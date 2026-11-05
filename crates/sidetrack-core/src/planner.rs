@@ -71,6 +71,10 @@ pub struct WorktreeEnv {
 pub struct DiskSpace {
     pub free_bytes: u64,
     pub total_bytes: u64,
+    /// Docker runs in a VM (Docker Desktop) whose disk can only grow as far as
+    /// the host drive holding it, so these are that drive's numbers.
+    #[serde(default)]
+    pub host_limited: bool,
 }
 
 /// How the app is kept away from a database while it's copied.
@@ -1851,6 +1855,7 @@ mod tests {
         w.disk = Some(DiskSpace {
             free_bytes: 500,
             total_bytes: 10_000,
+            host_limited: false,
         });
         let err = Planner::new(&c, &repo, &w).switch("feature").unwrap_err();
         assert!(format!("{err}").contains("not enough disk space"), "{err}");
@@ -1858,6 +1863,7 @@ mod tests {
         w.disk = Some(DiskSpace {
             free_bytes: 5_000,
             total_bytes: 10 << 30,
+            host_limited: false,
         });
         let plan = Planner::new(&c, &repo, &w).switch("feature").unwrap();
         assert!(

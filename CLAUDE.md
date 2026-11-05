@@ -57,6 +57,7 @@ Three crates:
   - **Not a default workspace member:** it needs WebKitGTK and a built frontend, so build it with `cargo build -p sidetrack-app`. CI checks it in its own job.
   - **Same plan only:** `apply_op` builds the plan for the same `Op` again and refuses if it differs from the one shown, or if it drops a database without `confirm_destructive`.
   - **Visual system:** "Press Proof". Read `.impeccable/surfaces/*.md` (the direction contract) and `DESIGN.md` before changing the UI.
+  - **Second look, "Canvas"** (Settings → Look): a sidebar of each project's sections and node canvases (`ui/src/Canvas.tsx`, `ProjectCanvas.tsx`, `canvas.css`, all scoped to `[data-look="canvas"]`). Shared parts word themselves for it via `usePlain()` (`look.ts`); both looks share project state through `useProject` (`project.ts`). See `DESIGN.md` → "The Canvas look".
   - **Demo data:** `npm run dev` runs the UI alone with labelled demo data (`ui/src/demo.ts`).
 
 Every command follows the same pipeline:

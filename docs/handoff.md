@@ -32,7 +32,8 @@ Last updated 2026-11-05. Read `CLAUDE.md` first, then this.
 | Handoff update after PR #25 | merged (PR #26) |
 | Desktop app: Add project (init from the app); init and hook install in the core | merged (PR #27) |
 | Desktop app: collapsible column; a plain error when a project's folder is gone | merged (PR #28, through #27's branch) |
-| **Showcase screenshots in `public/`; Vite pre-bundles the Tauri modules** | **open as PR #29** (the commit pushed to #28 after #28 had merged into #27's branch) |
+| Showcase screenshots in `public/`; Vite pre-bundles the Tauri modules | merged (PR #29) |
+| **Desktop app: a second look, "Canvas" (sidebar of sections, node canvases, drag and drop); host-drive disk space under Docker Desktop** | **open as PR #30** (branch `feat/app-canvas-look`) (see "The Canvas look" below) |
 
 `main` is protected. Every PR needs one approval, including a code-owner review (`@Abrar118`). The owner can bypass the rules. Force-pushes and deletion are blocked.
 
@@ -89,6 +90,40 @@ See plan-v1.md, "Local proxy (v2)", decisions 17–25.
 ## Open question for the owner
 
 **Copy speed on the Mac (Docker Desktop).** Run `sidetrack bench` against a real ~2 GB project database and note the time. Linux numbers are in `plan-v1.md`: FILE_COPY took 3.9 s (13 s right after loading), WAL_LOG 11.9 s. The owner plans to run this later (as of 2026-11-04).
+
+## How the owner likes to work
+
+These were kept in one Claude account's memory; they're here so any session has them.
+- **Follow the owner's stated UI structure.** For the Canvas look, the owner cut off Impeccable's themed-direction cards and dictated the layout. Use plain system type at normal sizes; skip concept-seed and decision-page rounds unless asked. When asked to design "with Impeccable", show one or two quick HTML sketches of the owner's own structure and get a yes before building.
+- **After a PR merges** ("merged"): pull `main` first, then refresh this file through its own PR.
+- **Screenshots go in `public/screenshots/`** and are listed in `public/README.md`. `.impeccable/review/` is git-ignored scratch space.
+- Short answers, real verification (screenshots of the actual render, real Docker when possible), and say plainly what wasn't checked.
+
+## The Canvas look (branch `feat/app-canvas-look`)
+
+A second look, picked in Settings → Look; Press Proof stays the default and is unchanged. `DESIGN.md` → "The Canvas look" has the tokens and rules; the chosen layout sketch is `.impeccable/mocks/decision/canvas-d.html` (a full canvas, a card of actions under the selected node, a dock of drop targets, a details panel at the bottom).
+
+**Built:**
+- **Shell:** collapsible 240px sidebar (Ctrl+B): projects with a state dot, the selected project's sections (Overview, Branches, Databases, Containers, Structure), Add project, Settings, disk space.
+- **Overview:** the project's switch plan, explained for this look in `Proof.tsx` behind `usePlain()` (`look.ts`): now → after boxes with a sentence on why, "What happens when you apply" with a kind chip per step, a "Worth knowing" callout, schema rows with added / not there badges, disk with a sentence, a plain summary and "Ready to apply".
+- **Canvases** (`Canvas.tsx` engine, `ProjectCanvas.tsx` sections): pan, Ctrl+scroll zoom, Fit, Reset layout, draggable nodes (positions saved per project and section in localStorage), auto-fit when wider than the pane, colour-coded node types with a hideable key, a label on every edge.
+  - Branches: git branches → their databases. Databases: the DB tree with snapshots. Containers: images and source folders → containers → volumes, folders and databases ("needs" edges only for the selected service). Structure: repo → `sidetrack.toml` → compose, routing, migrations, database → services, folders, the active DB.
+- **Acting:** a card of actions under the clicked node (the same fields as Press Proof), closed by a second click, a click on the canvas, or Escape. A dock of drop targets: drag a git branch with no DB onto a database to copy it; a snapshot or the parent onto the app's database to reset; the app's database to Snapshot; anything else to Delete. A drop only opens the plan.
+- **Details panel:** Details / Commits / Warnings for the selected node; hideable and remembered.
+- **Shared refactor:** the project view's state moved to `project.ts` (`useProject`), used by both looks.
+- **Backend:** `ProjectDetail.services` now lists every compose service with image, build context, `depends_on` and volumes (from `docker compose config`); `ProjectDetail.structure` summarises `sidetrack.toml`.
+- **Disk space under Docker Desktop (core):** `df` inside the container reports Docker Desktop's sparse ~1 TB virtual disk. `Workspace::disk_space` now also reads the host drive holding that disk (`docker_desktop_dir`, `host_disk`: `GetDiskFreeSpaceExW` on Windows, `df` elsewhere) and keeps the smaller (`limit_by_host`, unit-tested). `DiskSpace.host_limited` says so; `doctor`, the disk guard and both looks use it. Native Linux Docker is unchanged.
+
+**Checked:** fmt, clippy (workspace and app), all tests, the UI build; the Impeccable detector on the changed files; screenshots of every section in light and dark, in the browser demo and in the real app against `D:\Demo-showcase` (real Docker and Postgres, nothing applied); `sidetrack doctor` there reads 77.4 GB free of 291.8 GB (drive C:) instead of 950 GB. The owner checked drag and drop by hand.
+
+**Left to do:**
+- Review and merge PR #30 (needs the owner's approval as code owner), then update this file.
+- Retake `public/screenshots/canvas/real*` now that disk space is fixed (`node crates/sidetrack-app/scripts/screenshots.mjs app <dir>` while the app runs with WebView2 remote debugging; see the script's header).
+- The macOS Docker Desktop path in `desktop_disk_dirs` (`~/Library/Containers/com.docker.docker/Data/vms/0/data`) is untested; Colima and OrbStack aren't detected.
+- No Apply has been run from the Canvas look against a real database yet (the plans and Apply are the same code as Press Proof's).
+- Containers gets busy with many services; the dock can cover the lowest nodes until you pan or Fit. Arrow keys don't move between canvas nodes (Tab does, and every drag action is also in the node card).
+- Impeccable's finish review wasn't run for this look, and `.impeccable/design.json` predates both looks' latest changes (`/impeccable document` refreshes it). No surface brief was written for the Canvas look; `DESIGN.md` is its record.
+- `D:\Demo-showcase` (the three demo repos and their registry) lives only on the owner's old machine.
 
 ## Desktop app (v1.5, in progress)
 

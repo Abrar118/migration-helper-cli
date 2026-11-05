@@ -7,6 +7,7 @@ import "@fontsource/familjen-grotesk/700.css";
 import "@fontsource/courier-prime/400.css";
 import "@fontsource/courier-prime/700.css";
 import "./styles.css";
+import "./canvas.css";
 import { App } from "./App";
 
 createRoot(document.getElementById("root")!).render(

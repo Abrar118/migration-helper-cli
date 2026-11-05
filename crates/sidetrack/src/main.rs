@@ -759,9 +759,14 @@ fn doctor(dir: &Path, opts: &Opts) -> Result<bool> {
                 "disk space",
                 disk.free_bytes >= 1 << 30,
                 format!(
-                    "{} free of {} (each DB branch is a full copy)",
+                    "{} free of {}{} (each DB branch is a full copy)",
                     format_bytes(disk.free_bytes),
-                    format_bytes(disk.total_bytes)
+                    format_bytes(disk.total_bytes),
+                    if disk.host_limited {
+                        " on the drive holding Docker Desktop's disk"
+                    } else {
+                        ""
+                    }
                 ),
             );
         }

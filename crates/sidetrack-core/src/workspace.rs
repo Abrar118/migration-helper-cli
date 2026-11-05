@@ -460,7 +460,13 @@ impl Workspace {
                 ],
             )
             .ok()?;
-        parse_df(&out)
+        let vm = parse_df(&out)?;
+        // Docker Desktop's VM reports its own virtual disk (about 1 TB, sparse).
+        // That file can only grow as far as the host drive it sits on allows.
+        Some(limit_by_host(
+            vm,
+            docker_desktop_dir().and_then(|dir| host_disk(&dir)),
+        ))
     }
 
     /// For a switch between two existing databases, attach a summary of how the
@@ -532,7 +538,91 @@ fn parse_df(out: &str) -> Option<DiskSpace> {
     Some(DiskSpace {
         free_bytes: avail * 1024,
         total_bytes: total * 1024,
+        host_limited: false,
     })
+}
+
+/// The VM's numbers, unless the host drive under the VM disk has less free.
+fn limit_by_host(vm: DiskSpace, host: Option<DiskSpace>) -> DiskSpace {
+    match host {
+        Some(h) if h.free_bytes < vm.free_bytes => DiskSpace {
+            host_limited: true,
+            ..h
+        },
+        _ => vm,
+    }
+}
+
+/// The host folder holding Docker Desktop's VM disk, when Docker Desktop is the
+/// engine (asked once per run). `None` for native Docker on Linux or a remote host.
+fn docker_desktop_dir() -> Option<PathBuf> {
+    static DIR: std::sync::OnceLock<Option<PathBuf>> = std::sync::OnceLock::new();
+    DIR.get_or_init(|| {
+        let os = crate::process::capture(std::process::Command::new("docker").args([
+            "info",
+            "--format",
+            "{{.OperatingSystem}}",
+        ]))
+        .ok()?;
+        if !os.contains("Docker Desktop") {
+            return None;
+        }
+        desktop_disk_dirs().into_iter().find(|d| d.is_dir())
+    })
+    .clone()
+}
+
+/// Where Docker Desktop keeps its disk image: a folder chosen in its settings
+/// ("Disk image location"), else the platform default.
+fn desktop_disk_dirs() -> Vec<PathBuf> {
+    let mut dirs = vec![];
+    if cfg!(windows) {
+        let custom = dirs::config_dir()
+            .and_then(|c| {
+                std::fs::read_to_string(c.join("Docker").join("settings-store.json")).ok()
+            })
+            .and_then(|s| serde_json::from_str::<serde_json::Value>(&s).ok())
+            .and_then(|v| v.get("CustomWslDistroDir")?.as_str().map(PathBuf::from));
+        dirs.extend(custom);
+        dirs.extend(dirs::data_local_dir().map(|d| d.join("Docker").join("wsl")));
+    } else if cfg!(target_os = "macos") {
+        dirs.extend(
+            dirs::home_dir()
+                .map(|h| h.join("Library/Containers/com.docker.docker/Data/vms/0/data")),
+        );
+    }
+    dirs
+}
+
+/// Free and total space of the host drive holding `dir`.
+#[cfg(windows)]
+fn host_disk(dir: &Path) -> Option<DiskSpace> {
+    use std::os::windows::ffi::OsStrExt;
+    #[link(name = "kernel32")]
+    extern "system" {
+        fn GetDiskFreeSpaceExW(
+            dir: *const u16,
+            avail: *mut u64,
+            total: *mut u64,
+            free: *mut u64,
+        ) -> i32;
+    }
+    let wide: Vec<u16> = dir.as_os_str().encode_wide().chain(Some(0)).collect();
+    let (mut avail, mut total, mut free) = (0u64, 0u64, 0u64);
+    // SAFETY: `wide` is a NUL-terminated UTF-16 path that outlives the call, and
+    // the out-pointers are valid u64s on this stack frame.
+    let ok = unsafe { GetDiskFreeSpaceExW(wide.as_ptr(), &mut avail, &mut total, &mut free) };
+    (ok != 0).then_some(DiskSpace {
+        free_bytes: avail,
+        total_bytes: total,
+        host_limited: true,
+    })
+}
+
+#[cfg(not(windows))]
+fn host_disk(dir: &Path) -> Option<DiskSpace> {
+    let out = crate::process::capture(std::process::Command::new("df").arg("-Pk").arg(dir)).ok()?;
+    parse_df(&out)
 }
 
 #[cfg(test)]
@@ -547,6 +637,33 @@ mod tests {
         assert_eq!(d.total_bytes, 263174212 * 1024);
         assert_eq!(d.free_bytes, 188309384 * 1024);
         assert!(parse_df("garbage").is_none());
+    }
+
+    #[test]
+    fn host_drive_limits_a_vm_disk() {
+        let gib = 1u64 << 30;
+        let vm = DiskSpace {
+            free_bytes: 950 * gib,
+            total_bytes: 1007 * gib,
+            host_limited: false,
+        };
+        let host = DiskSpace {
+            free_bytes: 77 * gib,
+            total_bytes: 292 * gib,
+            host_limited: true,
+        };
+        let d = limit_by_host(vm, Some(host));
+        assert_eq!(
+            (d.free_bytes, d.total_bytes, d.host_limited),
+            (77 * gib, 292 * gib, true)
+        );
+        // A roomier host, or none (native Linux), leaves the VM's numbers.
+        let roomy = DiskSpace {
+            free_bytes: 2000 * gib,
+            ..host
+        };
+        assert_eq!(limit_by_host(vm, Some(roomy)), vm);
+        assert_eq!(limit_by_host(vm, None), vm);
     }
 
     #[test]

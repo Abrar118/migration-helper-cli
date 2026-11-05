@@ -41,3 +41,44 @@ export function applyTheme(t: Theme) {
     // Storage blocked: the choice still applies for this session.
   }
 }
+
+/** The two looks: Press Proof (big type, proofs) and Canvas (plain type, node canvases). */
+export type Look = "proof" | "canvas";
+
+const LOOK = "sidetrack.look";
+
+export function loadLook(): Look {
+  try {
+    return localStorage.getItem(LOOK) === "canvas" ? "canvas" : "proof";
+  } catch {
+    return "proof";
+  }
+}
+
+export function applyLook(l: Look) {
+  document.documentElement.setAttribute("data-look", l);
+  try {
+    localStorage.setItem(LOOK, l);
+  } catch {
+    // Storage blocked: the choice still applies for this session.
+  }
+}
+
+/** A value kept per viewer (a canvas layout, the last section), never needed for correctness. */
+export function loadJson<T>(key: string, fallback: T): T {
+  try {
+    const v = localStorage.getItem(key);
+    return v ? (JSON.parse(v) as T) : fallback;
+  } catch {
+    return fallback;
+  }
+}
+
+export function saveJson(key: string, value: unknown) {
+  try {
+    if (value === null) localStorage.removeItem(key);
+    else localStorage.setItem(key, JSON.stringify(value));
+  } catch {
+    // Storage blocked or full: it lasts for this session only.
+  }
+}

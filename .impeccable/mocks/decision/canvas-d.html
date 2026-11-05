@@ -1,0 +1,79 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><title>Canvas look: combined</title>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+body{width:1440px;height:900px;overflow:hidden;font:13px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Ubuntu,sans-serif;color:#1f2328;background:#f6f8fa;display:grid;grid-template-columns:240px 1fr}
+.mono{font-family:ui-monospace,"Cascadia Mono",Menlo,Consolas,monospace;font-size:12px}
+.side{background:#fff;border-right:1px solid #d1d9e0;display:flex;flex-direction:column;padding:10px 8px}
+.brand{display:flex;align-items:center;gap:8px;padding:4px 8px 12px;font-weight:600;font-size:14px}
+.tog{width:24px;height:24px;border:1px solid #d1d9e0;border-radius:6px;display:grid;place-items:center;color:#59636e}
+.grp{font-size:12px;color:#59636e;padding:10px 8px 4px}
+.it{display:flex;justify-content:space-between;padding:5px 8px;border-radius:6px}
+.it.on{background:#eef1f4;font-weight:600}.it i{font-style:normal;color:#59636e;font-weight:400}
+.sub{padding-left:14px}
+.dot{display:inline-block;width:7px;height:7px;border-radius:50%;background:#1a7f37;margin-right:6px}.dot.w{background:#bf8700}
+.foot{margin-top:auto;border-top:1px solid #d1d9e0;padding:10px 8px 2px;color:#59636e}
+.pane{display:grid;grid-template-rows:auto 1fr auto;min-width:0}
+.head{background:#fff;border-bottom:1px solid #d1d9e0;padding:10px 20px;display:flex;align-items:center;gap:14px}
+.head h1{font-size:18px;font-weight:600}.head p{color:#59636e}.head .r{margin-left:auto;display:flex;gap:6px}
+.btn{border:1px solid #d1d9e0;border-radius:6px;padding:4px 10px;background:#fff}
+.btn.d{color:#cf222e}
+.canvas{position:relative;overflow:hidden;background:#f6f8fa}
+.n{position:absolute;background:#fff;border:1px solid #d1d9e0;border-radius:8px;padding:8px 10px;width:250px}
+.n small{display:block;color:#59636e}.n.sel{border-color:#0969da;box-shadow:0 0 0 3px #ddf4ff}
+.b{display:inline-block;font-size:11px;border-radius:10px;padding:0 6px;border:1px solid #d1d9e0;color:#59636e;margin-left:4px}
+.b.g{color:#1a7f37;border-color:#aceebb;background:#dafbe1}.b.r{color:#cf222e;border-color:#ffcecb}
+.s{position:absolute;background:#fff;border:1px dashed #d1d9e0;border-radius:6px;padding:3px 8px;width:220px;color:#59636e}
+.card{position:absolute;background:#fff;border:1px solid #d1d9e0;border-radius:8px;box-shadow:0 8px 24px rgba(31,35,40,.12);padding:10px 12px;width:260px}
+.card h2{font-size:13px;margin-bottom:8px}.acts{display:flex;flex-wrap:wrap;gap:6px}.card p{color:#59636e;margin-top:8px}
+.dock{position:absolute;left:50%;bottom:16px;transform:translateX(-50%);display:flex;gap:8px;background:#fff;border:1px solid #d1d9e0;border-radius:10px;padding:6px;box-shadow:0 4px 12px rgba(31,35,40,.08)}
+.z{border:1px dashed #8c959f;border-radius:6px;padding:6px 14px;color:#59636e}.z.d{border-color:#cf222e;color:#cf222e}.z.off{opacity:.45}
+.tools{position:absolute;right:16px;bottom:16px;display:flex;gap:4px}
+.hint{position:absolute;left:16px;bottom:22px;color:#59636e}
+.panel{background:#fff;border-top:1px solid #d1d9e0;height:220px;display:grid;grid-template-rows:auto 1fr}
+.tabs{display:flex;align-items:center;gap:2px;border-bottom:1px solid #d1d9e0;padding:0 12px}
+.tabs span{padding:7px 12px;color:#59636e}.tabs .on{color:#1f2328;font-weight:600;box-shadow:inset 0 -2px #0969da}
+.tabs .x{margin-left:auto}
+.pb{display:grid;grid-template-columns:1.2fr 1fr 1fr;gap:28px;padding:12px 20px}
+.pb h2{font-size:12px;color:#59636e;font-weight:600;margin-bottom:6px}
+.kv{display:grid;grid-template-columns:100px 1fr;gap:3px 8px;color:#59636e}.kv b{font-weight:400;color:#1f2328}
+.list p{padding:2px 0;border-bottom:1px solid #eef1f4}.list small{color:#59636e;margin-left:6px}
+</style></head><body>
+<aside class="side">
+  <div class="brand"><span class="tog">⇤</span>sidetrack</div>
+  <div class="grp">Projects</div>
+  <div class="it on"><span><span class="dot w"></span>shop-api</span></div>
+  <div class="sub"><div class="it">Overview</div><div class="it">Branches<i>6</i></div><div class="it on">Databases<i>7</i></div><div class="it">Containers<i>4</i></div><div class="it">Structure</div></div>
+  <div class="it"><span><span class="dot"></span>billing</span></div>
+  <div class="it"><span><span class="dot w"></span>analytics-etl</span></div>
+  <div class="it"><span><span class="dot"></span>auth-service</span></div>
+  <div class="it" style="color:#0969da">+ Add project</div>
+  <div class="foot"><div class="it">Settings</div><div style="padding:6px 8px">41.3 GB free of 58 GB</div></div>
+</aside>
+<div class="pane">
+  <div class="head"><h1>Databases</h1><p>feature/refunds is checked out, but the app still uses <span class="mono">feature_payments_db</span></p><div class="r"><span class="btn">Clean up</span><span class="btn">Refresh</span></div></div>
+  <div class="canvas">
+    <svg width="1200" height="560" style="position:absolute" fill="none" stroke="#8c959f">
+      <path d="M282 70 C330 70,330 170,380 170"/><path d="M282 70 C330 70,330 300,380 300"/><path d="M632 170 C680 170,680 170,730 170" stroke="#0969da" stroke-width="2"/>
+      <path d="M46 96 V122 H62" stroke-dasharray="3 3"/></svg>
+    <div class="n" style="left:32px;top:42px"><b class="mono">app_dev</b><span class="b">adopted</span><small>main · 2.1 GB</small></div>
+    <div class="s" style="left:62px;top:112px">Snapshot 1 “before orders split”</div>
+    <div class="n" style="left:380px;top:140px"><b class="mono">feature_payments_db</b><span class="b g">app uses it</span><small>feature/payments · 2.2 GB</small></div>
+    <div class="n sel" style="left:730px;top:140px"><b class="mono">feature_refunds_db</b><small>feature/refunds · checked out</small></div>
+    <div class="card" style="left:730px;top:210px"><h2 class="mono">feature_refunds_db</h2><div class="acts"><span class="btn">Rename</span><span class="btn d">Delete</span></div><p>Snapshot and reset are for the database the app uses.</p></div>
+    <div class="n" style="left:380px;top:270px"><b class="mono">spike_cache_db</b><span class="b r">git branch gone</span><small>2 snapshots · 1.9 GB</small></div>
+    <div class="n" style="left:380px;top:360px;opacity:.6"><b class="mono">merged_search_db</b><small>not on the server</small></div>
+    <div class="hint">Drag a node onto a drop target to plan it</div>
+    <div class="dock"><span class="z">Snapshot</span><span class="z off">Reset here</span><span class="z d">Delete</span></div>
+    <div class="tools"><span class="btn">−</span><span class="btn">100%</span><span class="btn">+</span><span class="btn">Fit</span><span class="btn">Reset layout</span></div>
+  </div>
+  <div class="panel">
+    <div class="tabs"><span class="on">Details</span><span>Snapshots 0</span><span>Commits 4</span><span>Warnings 1</span><span class="x btn">Hide panel</span></div>
+    <div class="pb">
+      <div><h2>feature_refunds_db</h2><div class="kv"><span>Git branch</span><b class="mono">feature/refunds</b><span>Copied from</span><b class="mono">feature_payments_db</b><span>Size</span><b>2.2 GB</b><span>Created</span><b>6 days ago</b><span>Last used</span><b>2 days ago</b></div></div>
+      <div class="list"><h2>Last commits on feature/refunds</h2><p>Add refunds table and model<small>4f1c9e2 · 2h</small></p><p>Refund endpoint returns 202…<small>f1c9e20 · 22h</small></p><p>Drop payments.captured…<small>1c9e201 · 2d</small></p></div>
+      <div class="list"><h2>Warnings</h2><p>merged_search_db is in the registry but not on the server.</p></div>
+    </div>
+  </div>
+</div>
+</body></html>
