@@ -1,6 +1,6 @@
 # Handoff: where things stand and what's next
 
-Last updated 2026-11-04. Read `CLAUDE.md` first, then this.
+Last updated 2026-11-05. Read `CLAUDE.md` first, then this.
 
 ## State
 
@@ -19,12 +19,19 @@ Last updated 2026-11-04. Read `CLAUDE.md` first, then this.
 | Desktop app, first surface: All projects, plan proofs, Apply | merged (PR #12) |
 | Handoff update after PR #12 | merged (PR #13) |
 | Proxy-mode schema summary; the app starts the proxy like the CLI | merged (PR #14) |
+| Handoff update after PR #14 | merged (PR #15) |
+| Desktop app: project view (linked git branches and DB branch tree); `Git::log` | merged (PR #16) |
+| Desktop app: plans and Apply for create, snapshot, reset, delete, rename, gc | merged (PR #17, via #16's branch) |
+| **Desktop app: proof devices on sheets with nothing to apply; lead, sign-off and Escape fixes** | **open as PR #20.** PR #18 merged into `feat/app-plans` after that branch was already merged, so its commits never reached `main`; #20 re-opens the same branch against `main`. |
+| **TLS between the app and the proxy** | **open as PR #19** (CI green, including the TLS e2e step) |
 
 `main` is protected. Every PR needs one approval, including a code-owner review (`@Abrar118`). The owner can bypass the rules. Force-pushes and deletion are blocked.
 
 After every PR merge, update this file: the State table, the follow-ups, and the date.
 
-Stale remote branches were deleted on 2026-11-04. Since then, the merged branches `docs/handoff-after-pr10`, `feat/desktop-app`, `docs/handoff-after-pr12` and `feat/app-proxy-autostart` are back on the remote. The owner will clean them up later.
+Stacked PRs: merge the bottom one into `main` first, then retarget the next one to `main` before merging it. Merging an upper PR into its stacked base after that base has merged strands its commits (that's what happened to #18).
+
+Stale remote branches were deleted on 2026-11-04. Since then, the merged branches `docs/handoff-after-pr10`, `feat/desktop-app`, `docs/handoff-after-pr12`, `feat/app-proxy-autostart`, `docs/handoff-after-pr14`, `feat/app-project-view` and `feat/app-plans` are back on the remote. The owner will clean them up later.
 
 ## Getting going on a new machine
 
@@ -67,7 +74,8 @@ See plan-v1.md, "Local proxy (v2)", decisions 17–25.
   - Each worktree's env file is pointed at its own port automatically (`SetEnvPort`).
   - Removed worktrees free their port, and their database stops counting as in use.
   - Env mode in a worktree only warns, because a containerized app resolves `db` to its own compose network. Proxy mode is the supported setup for worktrees.
-- **TLS** (not started, low priority for local dev): the proxy answers "no" to SSL requests, so `sslmode=require` clients fail. Supporting it means terminating TLS in the proxy with a local certificate (e.g. `rustls` with a self-signed cert) and opening TLS upstream when the server needs it.
+- **TLS** (PR #19, open): the proxy terminates TLS from the app with a self-signed certificate (`proxy-tls.pem` next to the registry; rustls with `ring`, rcgen). The proxy-to-Postgres leg stays plain. Decisions 31–35 in `plan-v1.md` are on that branch.
+  - Left out: TLS upstream (with TLS on both sides, libpq's `channel_binding=prefer` ties SCRAM to the proxy's certificate and the server rejects the login, so it needs the auth exchange rewritten), and PG17 `sslnegotiation=direct`.
 
 ## Open question for the owner
 
@@ -97,12 +105,17 @@ See plan-v1.md, "Local proxy (v2)", decisions 17–25.
 
 **Starts the proxy (PR #14):** before reading a proxy-mode project with `routing.autostart` on, the app starts the proxy the same way the CLI does (`Workspace::proxy_needs_start` / `start_proxy`, now in the core). It runs the `sidetrack` CLI for that, looking next to the app, then on PATH, then in `~/.cargo/bin`. If that fails, the reason shows as a Query on the proof. Not yet checked on a real machine: stop the proxy in a proxy-mode project, focus the app, and the plan should hold connections rather than stop the app.
 
-**Not built yet, in rough order:**
-- **Project view:** the two linked panes the user chose, git branches on the left and the DB branch tree (parent → child) on the right, with snapshots, worktrees, container status and commit history per branch.
-- **Plans for other operations:** create, snapshot, reset, delete, rename, gc.
-  - `Proof.tsx` already handles destructive plans: spot red, a confirm checkbox, the sign-off in spot.
-  - Nothing has rendered or reviewed that path yet, because a switch never drops anything.
-- **Design ceiling items from the finish review:** the in-sync, problem and settings sheets don't use the proof devices (colour bar, sign-off), and there's no registration target or tint ramp.
+**Project view (PR #16):** "Open project" on All projects. Git branches on the left (checked-out first, last 5 commits under the selected one, container status at the foot); the DB branch tree on the right (parent → child, snapshots, which worktree uses each DB, DBs whose git branch is gone or that aren't on the server). Selecting either side selects its partner. Built by a subagent inside the existing Press Proof contract, without a new sketch round.
+
+**Plans for other operations (PR #17):** `ops.rs` adds `plan_op` / `apply_op` keyed by an `Op` enum (switch, create, snapshot, reset, delete, rename, gc), mirroring the CLI's `plan_command`; `apply_switch` is folded in. Actions sit on the selected DB node, on a git branch with no DB (create), and "Clean up" (gc) in the lead. Destructive plans render for the first time: drops in spot, Apply disabled until the plan-worded checkbox is ticked.
+- Gaps: reset only offers the node's parent or its own snapshots (the CLI's `--to` takes any); no `snapshot rm`; if `plan_op` can't start the proxy, the reason only goes to stderr.
+
+**Sheet devices and fixes (PR #20, open):** a registration target on in-sync / "nothing to clean up" sheets, a step-colour tint ramp in Settings, the sign-off always reachable on tall proofs, lead and path wrapping, Escape after a failed apply.
+- `.impeccable/design.json` is older than `DESIGN.md` and lacks the project view and new devices; `/impeccable document` would refresh it.
+
+**Still to check on a real machine** (owner, `npm run tauri dev`): the project view, including a project with the db container stopped and one with a linked worktree; applying a delete and a reset.
+
+**Not built yet:**
 - **Approval requests from the git hook** (v2).
 
 **Core gap, fixed in PR #14:** `Workspace::annotate_schema` only looked at `RewriteEnv` steps, so proxy-mode switches never got a schema summary. It now reads `SetProxyTarget` too (`schema_pair`, with a unit test).
