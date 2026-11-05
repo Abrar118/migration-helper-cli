@@ -176,6 +176,18 @@ Decisions:
 
 `tests/e2e/proxy.sh` connects with `sslmode=require`, and with `verify-full` against the saved certificate. Every other psql call in it uses the default `prefer`, so it goes over TLS too.
 
+## Approvals from the git hook
+
+When the hook has no terminal (a GUI git client) and the plan isn't auto-approved, it tells the desktop app, if it's open, instead of only printing a hint (`notify.rs`). The app reads that project again, brings up its switch proof and asks for the user's attention. Applying works exactly as it does after a refresh.
+
+Decisions:
+
+36. **Only the project's root crosses the socket, never the plan, and the hook doesn't wait for a decision.** The app plans for itself, and `apply_op` already re-plans and refuses a plan that differs from the one shown, so a plan sent by the hook would only be checked and thrown away. Waiting for the user's answer would hold up the checkout in the GUI client, which P0.10 rules out. The hook still prints its line, now saying the plan is waiting in the app.
+37. **Localhost TCP with the port in `app.port` next to the registry, no token.** One transport on every platform, instead of Unix sockets plus Windows named pipes. The app answers `ok` only for a root that's a registered project, and showing a proof changes nothing, so a token would protect nothing. Every wait is capped at 300 ms, so a stale port file (the app has exited) costs the hook well under a second.
+38. **Only checkouts in a project's main worktree reach the app.** The app plans for each project's main worktree, so a linked worktree's checkout keeps the plain hint.
+
+`notify::tests` covers both answers and a stale port file. The owner checks the whole loop with a GUI git client.
+
 ## Test strategy
 
 - **Unit tests:** naming, envfile, config round-trip, compose JSON parsing, detection on fixture directories, file-set logic, planner (pure inputs).

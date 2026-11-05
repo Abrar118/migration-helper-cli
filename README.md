@@ -47,6 +47,8 @@ After that, just use git. When you check out a branch, the hook shows a plan and
 sidetrack: Create feature_c_db for feature/c and switch to it (from app_dev) — run `sidetrack switch` to apply
 ```
 
+If the desktop app is open, the hook also sends it the checkout. The app then shows the plan for you to approve.
+
 ## How it works
 
 - **Switching to a branch that has a DB branch:** rewrites the DB name in your env file, recreates the app containers, then runs any migrations the branch has that the database doesn't.

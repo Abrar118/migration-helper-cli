@@ -10,9 +10,11 @@ mod views;
 
 use anyhow::{bail, Result};
 use sidetrack_core::apply::Report;
+use sidetrack_core::notify;
 use sidetrack_core::plan::Plan;
+use sidetrack_core::registry::{self, Registry};
 use sidetrack_core::workspace::Workspace;
-use tauri::{AppHandle, Emitter};
+use tauri::{AppHandle, Emitter, Manager, UserAttentionType};
 
 use crate::ops::Op;
 use crate::views::{Overview, ProjectDetail};
@@ -88,8 +90,35 @@ async fn blocking<T: Send + 'static>(
         .map_err(|e| format!("{e:#}"))
 }
 
+/// A git checkout without a terminal (a GUI client) left a project needing a
+/// switch, and the hook asked us to show it. Only registered projects count.
+/// The frontend reads the project again and shows its switch proof; nothing is
+/// applied until the user approves it there.
+fn on_checkout(app: &AppHandle, root: &str) -> bool {
+    let known = registry::default_path()
+        .and_then(|p| Registry::open(&p))
+        .and_then(|r| r.project_by_root(root))
+        .is_ok_and(|p| p.is_some());
+    if known {
+        let _ = app.emit("checkout", root);
+        if let Some(w) = app.get_webview_window("main") {
+            let _ = w.request_user_attention(Some(UserAttentionType::Informational));
+        }
+    }
+    known
+}
+
 fn main() {
     tauri::Builder::default()
+        .setup(|app| {
+            let handle = app.handle().clone();
+            let listening = notify::port_file()
+                .and_then(|f| notify::listen(&f, move |root| on_checkout(&handle, root)));
+            if let Err(e) = listening {
+                eprintln!("sidetrack: the git hook can't reach the app: {e:#}");
+            }
+            Ok(())
+        })
         .invoke_handler(tauri::generate_handler![
             overview,
             project_detail,

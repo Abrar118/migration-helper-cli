@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
-import { inApp, loadOverview } from "./api";
+import { inApp, loadOverview, onCheckout } from "./api";
 import { gb } from "./format";
 import { Proof } from "./Proof";
 import { ProjectList } from "./ProjectList";
@@ -29,6 +29,8 @@ export function App() {
   const busy = useRef(false);
   const pinnedRef = useRef(pinned);
   pinnedRef.current = pinned;
+  const openRef = useRef(open);
+  openRef.current = open;
 
   const refresh = useCallback(async () => {
     if (busy.current) return;
@@ -66,6 +68,22 @@ export function App() {
     window.addEventListener("focus", onFocus);
     return () => window.removeEventListener("focus", onFocus);
   }, [refresh]);
+
+  // A checkout in a GUI client left a project needing a switch: bring up its
+  // proof, unless a plan is being applied or a project is open (there, the
+  // refresh adds "See the switch plan" to that project's lead).
+  useEffect(
+    () =>
+      onCheckout((root) => {
+        if (pinnedRef.current) return;
+        if (!openRef.current) {
+          setView("projects");
+          setSelected(root);
+        }
+        refresh();
+      }),
+    [refresh],
+  );
 
   const back = useCallback(() => {
     setOpen(null);

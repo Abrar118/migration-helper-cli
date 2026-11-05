@@ -137,6 +137,7 @@ Detection is a pure function of those models plus the repo files, so tests feed 
 - `hook run` must always exit 0 and must never prompt without a TTY. Without one, it prints a one-line hint.
 - It intentionally does **not** skip when old HEAD == new HEAD, because `git checkout -b` needs a new DB branch.
 - The installed block sits between `# >>> sidetrack >>>` markers, right after the shebang.
+- Without a TTY, it also tells the desktop app, if it's open (`notify.rs`). That's localhost TCP, with the port in `app.port` next to the registry. Only the project root is sent, and only from the main worktree. The app shows that project's switch proof, and the hook doesn't wait for an answer.
 
 ## Adding a plan step
 

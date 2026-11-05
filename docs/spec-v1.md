@@ -266,7 +266,7 @@ These are reasons for the architecture decisions below:
 - ✅ **Local proxy routing (v2):** the app always connects to its normal DB name, and the proxy rewrites the database name in the Postgres startup message. Built as `routing.mode = "proxy"` and `sidetrack proxy`; see plan-v1.md, "Local proxy (v2)".
 - **Tauri desktop app (v1.5):**
   - Read-only maps of git branches, DB branches, containers and commits; plan previews and schema diffs.
-  - Later, approvals: the hook sends the plan to the running app over a local socket when there is no TTY.
+  - ✅ Approvals: with no TTY, the hook tells the running app over a local socket, and the app shows the plan for approval. See plan-v1.md, "Approvals from the git hook".
   - This is why the core is a library, plans are serialisable, and the registry is global.
 - **More engines, in this order:** MySQL/MariaDB (InnoDB transportable tablespaces, needs a spike) → SQL Server (backup/restore for branches, native database snapshots for resets) → Oracle (pluggable database clone). The engine interface is extracted when MySQL lands, not before.
 - ✅ **Git worktrees:** several DB branches active at once. Built on proxy routing; see plan-v1.md, "Git worktrees".

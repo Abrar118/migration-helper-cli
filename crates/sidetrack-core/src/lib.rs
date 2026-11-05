@@ -11,6 +11,7 @@ pub mod envfile;
 pub mod git;
 pub mod migrations;
 pub mod naming;
+pub mod notify;
 pub mod plan;
 pub mod planner;
 pub mod process;
