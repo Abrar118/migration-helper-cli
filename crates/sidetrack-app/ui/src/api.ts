@@ -1,5 +1,5 @@
-import type { Op, Overview, Plan, Planned, ProjectDetail, Report } from "./types";
-import { demoApply, demoDetail, demoOverview, demoPlan } from "./demo";
+import type { AddPreview, Op, Overview, Plan, Planned, ProjectDetail, Report } from "./types";
+import { demoAdd, demoApply, demoDetail, demoOverview, demoPlan, demoPreview, demoStartDatabase } from "./demo";
 
 /** Inside the Tauri window; otherwise (plain `vite` in a browser) demo data is used. */
 export const inApp = typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
@@ -65,4 +65,33 @@ export function onCheckout(cb: (root: string) => void): () => void {
     done = true;
     stop?.();
   };
+}
+
+/** Ask for a folder to add. Null if the user cancels. */
+export async function pickFolder(): Promise<string | null> {
+  if (!inApp) return "/home/dev/code/inventory";
+  const { open } = await import("@tauri-apps/plugin-dialog");
+  const dir = await open({ directory: true, title: "Add a project to sidetrack" });
+  return typeof dir === "string" ? dir : null;
+}
+
+/** What adding the repo at (or above) `dir` would do. Changes nothing. */
+export async function previewProject(dir: string): Promise<AddPreview> {
+  if (!inApp) return demoPreview(dir);
+  const { invoke } = await import("@tauri-apps/api/core");
+  return invoke<AddPreview>("preview_project", { dir });
+}
+
+/** `docker compose up -d <database>` for the repo at `root`. */
+export async function startDatabase(root: string): Promise<void> {
+  if (!inApp) return demoStartDatabase();
+  const { invoke } = await import("@tauri-apps/api/core");
+  return invoke("start_database", { root });
+}
+
+/** Add the repo at `root`; refused if its setup no longer reads as `shownToml`. Returns what was done. */
+export async function addProject(root: string, shownToml: string, installHook: boolean): Promise<string[]> {
+  if (!inApp) return demoAdd(root, installHook);
+  const { invoke } = await import("@tauri-apps/api/core");
+  return invoke<string[]>("add_project", { root, shownToml, installHook });
 }

@@ -365,7 +365,7 @@ pub fn autostart(ws: &Workspace) -> Option<String> {
 /// The sidetrack CLI, which runs the proxy: next to this app, then on PATH,
 /// then in `~/.cargo/bin` (apps opened from a desktop often get a shorter PATH
 /// than the terminal).
-fn sidetrack_exe() -> Option<PathBuf> {
+pub fn sidetrack_exe() -> Option<PathBuf> {
     let name = format!("sidetrack{}", std::env::consts::EXE_SUFFIX);
     let beside = std::env::current_exe()
         .ok()

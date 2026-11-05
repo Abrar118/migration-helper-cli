@@ -1,11 +1,12 @@
 import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
-import { inApp, loadOverview, onCheckout } from "./api";
-import { gb } from "./format";
+import { AddProject } from "./AddProject";
+import { inApp, loadOverview, onCheckout, pickFolder } from "./api";
+import { gb, plural } from "./format";
 import { Proof } from "./Proof";
 import { ProjectList } from "./ProjectList";
 import { ProjectPage } from "./ProjectPage";
 import { EmptySheet, InSyncSheet, LoadErrorSheet, ProblemSheet, Sheet } from "./Sheets";
-import { createsDatabase, target } from "./steps";
+import { createsDatabase, pendingOnly, target } from "./steps";
 import { Units } from "./text";
 import { applyTheme, loadTheme, type Theme } from "./theme";
 import type { Overview, Plan, ProjectView } from "./types";
@@ -26,18 +27,31 @@ export function App() {
   const [pinned, setPinned] = useState<{ root: string; plan: Plan } | null>(null);
   // Proofs set aside with "Not now", until the next refresh.
   const [setAside, setSetAside] = useState<Set<string>>(new Set());
+  // A folder being added (Add project), until it's added or cancelled.
+  const [adding, setAdding] = useState<string | null>(null);
   const busy = useRef(false);
   const pinnedRef = useRef(pinned);
   pinnedRef.current = pinned;
   const openRef = useRef(open);
   openRef.current = open;
 
+  // Asked to refresh while a read was running: that read may predate the
+  // change (a checkout the hook just reported), so read once more after it.
+  const again = useRef(false);
+
   const refresh = useCallback(async () => {
-    if (busy.current) return;
+    if (busy.current) {
+      again.current = true;
+      return;
+    }
     busy.current = true;
     setLoading(true);
     try {
-      const o = await loadOverview();
+      let o = await loadOverview();
+      while (again.current) {
+        again.current = false;
+        o = await loadOverview();
+      }
       setOverview(o);
       setLoadError(null);
       setSetAside(new Set());
@@ -85,6 +99,14 @@ export function App() {
     [refresh],
   );
 
+  const startAdd = useCallback(async () => {
+    const dir = await pickFolder();
+    if (!dir) return;
+    setOpen(null);
+    setView("projects");
+    setAdding(dir);
+  }, []);
+
   const back = useCallback(() => {
     setOpen(null);
     refresh();
@@ -131,6 +153,9 @@ export function App() {
         ) : (
           <ProjectList projects={projects} selected={view === "projects" ? selected : null} onSelect={(r) => { setSelected(r); setView("projects"); }} />
         )}
+        <div className="add-row">
+          <button className="text-button" onClick={startAdd} disabled={pinned !== null}>Add project</button>
+        </div>
         <div className="disk">
           {disk ? (
             <>
@@ -149,6 +174,23 @@ export function App() {
       <main className="main">
         {view === "settings" ? (
           <Settings theme={theme} onTheme={setTheme} registry={overview?.registry ?? "…"} />
+        ) : adding ? (
+          <>
+            <div className="lead">
+              <p>Add a project</p>
+            </div>
+            <AddProject
+              key={adding}
+              dir={adding}
+              onPickAgain={startAdd}
+              onCancel={() => setAdding(null)}
+              onDone={(root) => {
+                setAdding(null);
+                setSelected(root);
+                refresh();
+              }}
+            />
+          </>
         ) : (
           <>
             <div className="lead">
@@ -168,7 +210,7 @@ export function App() {
             {loadError ? (
               <LoadErrorSheet message={loadError} />
             ) : overview && projects.length === 0 ? (
-              <EmptySheet registry={overview.registry} />
+              <EmptySheet registry={overview.registry} onAdd={startAdd} />
             ) : project ? (
               <ProjectSheet
                 p={project}
@@ -208,7 +250,7 @@ function ProjectSheet(props: {
         name={p.name}
         op={{ op: "switch" }}
         plan={plan}
-        title={`Switch ${p.name} to ${p.git_branch ?? "this branch"}`}
+        title={pendingOnly(plan) ? `Migrate ${p.active_db ?? p.name}` : `Switch ${p.name} to ${p.git_branch ?? "this branch"}`}
         warnings={p.warnings}
         disk={disk}
         onStart={() => props.onStart(plan)}
@@ -227,6 +269,8 @@ function lead(p: ProjectView, applying: boolean): ReactNode {
   if (applying) return <>The plan for {p.name}</>;
   if (p.problem) return <>{p.name} needs attention</>;
   if (p.plan) {
+    const pending = pendingOnly(p.plan);
+    if (pending) return <>{p.name} has {plural(pending.length, "migration")} to&nbsp;run</>;
     return createsDatabase(p.plan)
       ? <>{p.name} needs a database for <Nw>{p.git_branch}</Nw></>
       : <>{p.name} should switch to <Nw>{target(p.plan)}</Nw></>;
@@ -239,7 +283,7 @@ function where(p: ProjectView): ReactNode {
   const parts: ReactNode[] = [p.path];
   if (p.mode === "proxy") parts.push(`proxy ${p.listen?.replace(/^.*:/, ":") ?? ""}`);
   else if (p.mode) parts.push("env file");
-  if (p.plan && p.active_db) parts.push(<>the app is still on <span className="db">{p.active_db}</span></>);
+  if (p.plan && p.active_db && !pendingOnly(p.plan)) parts.push(<>the app is still on <span className="db">{p.active_db}</span></>);
   return <Units items={parts} />;
 }
 

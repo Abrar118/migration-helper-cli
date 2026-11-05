@@ -9,6 +9,8 @@ pub mod detect;
 pub mod engine;
 pub mod envfile;
 pub mod git;
+pub mod hook;
+pub mod init;
 pub mod migrations;
 pub mod naming;
 pub mod notify;

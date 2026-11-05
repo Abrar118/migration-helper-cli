@@ -137,6 +137,13 @@ export function target(plan: Plan): string | null {
   return null;
 }
 
+/** Migrations a plan runs on the database the app already uses (no switch, only catching up). */
+export function pendingOnly(plan: Plan): string[] | null {
+  if (target(plan) !== null) return null;
+  const run = plan.steps.find((s) => s.type === "run_migrations");
+  return run?.type === "run_migrations" ? run.pending : null;
+}
+
 /** True when the plan creates the target database (the branch had none). */
 export function createsDatabase(plan: Plan): boolean {
   return plan.steps.some((s) => s.type === "clone_database" || s.type === "create_empty_database");

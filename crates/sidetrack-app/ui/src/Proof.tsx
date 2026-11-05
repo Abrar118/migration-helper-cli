@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { applyOp } from "./api";
 import { bytes, gb, plural, seconds } from "./format";
-import { addedBytes, command, createsDatabase, describe, ink, isBookkeeping, label, meta, target, visibleSteps } from "./steps";
+import { addedBytes, command, createsDatabase, describe, ink, isBookkeeping, label, meta, pendingOnly, target, visibleSteps } from "./steps";
 import type { DiskSpace, Op, Plan, Report, Step } from "./types";
 import { Code, sentence, Slug } from "./text";
 
@@ -340,6 +340,19 @@ function Fact({ plan, drops }: { plan: Plan; drops: string[] }) {
           </>
         );
       }
+      const pending = pendingOnly(plan);
+      if (pending) {
+        return (
+          <>
+            <h3>Migrations to run</h3>
+            <ul className="drops">
+              {pending.slice(0, 4).map((m) => <li key={m} className="db">{m}</li>)}
+              {pending.length > 4 && <li className="fact-sub">and {pending.length - 4} more</li>}
+            </ul>
+            <p className="fact-sub">On the database the app already uses.</p>
+          </>
+        );
+      }
       return (
         <>
           <h3>The app will use</h3>
@@ -390,8 +403,11 @@ function doneText(plan: Plan, project: string, drops: string[]): ReactNode {
     case "snapshot_remove":
       if (drops.length === 0) return <>Updated sidetrack's records.</>;
       return drops.length <= 3 ? <>Dropped {names(drops)}.</> : <>Dropped {drops.length} databases.</>;
-    default:
+    default: {
+      const pending = pendingOnly(plan);
+      if (pending) return <>Ran {plural(pending.length, "migration")} on the database {project} uses.</>;
       return <>{project} now uses <Db>{target(plan)}</Db>.</>;
+    }
   }
 }
 

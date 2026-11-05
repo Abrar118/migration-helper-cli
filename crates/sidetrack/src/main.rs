@@ -9,16 +9,15 @@ use std::process::ExitCode;
 use anyhow::{bail, Context, Result};
 use clap::{Parser, Subcommand};
 use serde_json::json;
-use sidetrack_core::compose::{docker_available, Compose, ConfigView};
+use sidetrack_core::compose::docker_available;
 use sidetrack_core::config::Config;
-use sidetrack_core::detect::{detect, ComposeViews};
 use sidetrack_core::engine::postgres::format_bytes;
 use sidetrack_core::git::Git;
-use sidetrack_core::migrations;
+use sidetrack_core::init::Setup;
 use sidetrack_core::naming;
 use sidetrack_core::planner::ResetTo;
-use sidetrack_core::registry::{self, NewBranch, Registry};
-use sidetrack_core::workspace::{compose_for, Workspace};
+use sidetrack_core::registry::{self, Registry};
+use sidetrack_core::workspace::Workspace;
 
 use crate::ui::{ago, confirm, run_plan, Opts};
 use sidetrack_core::apply::Report;
@@ -298,196 +297,69 @@ fn init(
     no_hook: bool,
     proxy: bool,
 ) -> Result<bool> {
-    let git = Git::discover(dir)?;
-    let root = git.root().to_path_buf();
-    anyhow::ensure!(
-        docker_available(),
-        "Docker isn't reachable; start Docker and try again"
-    );
-
-    let main_branch = match main_branch {
-        Some(b) => Some(b),
-        None => ["main", "master"]
-            .into_iter()
-            .find(|b| git.branch_exists(b).unwrap_or(false))
-            .map(String::from),
-    };
-
-    let (cfg, compose_project) = if Config::exists(&root) {
-        let cfg = Config::load(&root)?;
-        println!(
+    let setup = Setup::read(dir, main_branch, proxy)?;
+    match &setup.detected {
+        None => println!(
             "Using the existing {}.",
             sidetrack_core::config::CONFIG_FILE
-        );
-        if proxy && !cfg.routing.is_proxy() {
-            bail!(
-                "{} already exists in env mode; edit [routing] by hand (see the README's proxy section)",
-                sidetrack_core::config::CONFIG_FILE
-            );
-        }
-        let name = compose_for(&cfg, &root).config(ConfigView::Resolved)?.name;
-        (cfg, name)
-    } else {
-        let compose = Compose::new(&root, vec![]);
-        let views = ComposeViews {
-            resolved: compose
-                .config(ConfigView::Resolved)
-                .context("reading the compose config")?,
-            env_files: compose.config(ConfigView::EnvFiles)?,
-            raw: compose.config(ConfigView::Raw)?,
-        };
-        let mut found = detect(&root, &root, &views)?;
-        if found.user.is_none() {
-            if let Some(file) = found.user_file.clone() {
-                if let Ok(u) = compose.exec(&found.db_service, &["cat", &file]) {
-                    found.user = Some(u.trim().to_string());
-                }
-            }
-        }
-        if opts.json {
-            println!("{}", json!({ "detected": found }));
-        } else {
-            println!("Detected:\n{}", found.render(proxy));
-        }
-        let cfg = found.to_config(main_branch.clone(), proxy).context(
-            "detection is incomplete; write sidetrack.toml by hand (see README) and run `sidetrack init` again",
-        )?;
-        if proxy {
-            let url = if cfg.routing.file.is_empty() {
-                let vars: Vec<String> = found
-                    .inline
-                    .iter()
-                    .map(|i| format!("{} ({})", i.variable, i.service))
-                    .collect();
-                format!("{} in the compose file", vars.join(", "))
+        ),
+        Some(found) => {
+            let cfg = &setup.cfg;
+            if opts.json {
+                println!("{}", json!({ "detected": found }));
             } else {
-                format!("{} in {}", cfg.routing.variable, cfg.routing.file)
-            };
-            println!(
-                "Proxy mode: point {url} at the proxy, once: host `host.docker.internal` from containers \
-                 (`localhost` from this machine), port {}, database {}.\n\
-                 On Linux, containers also need `extra_hosts: [\"host.docker.internal:host-gateway\"]` \
-                 and the proxy must listen on 0.0.0.0 (routing.listen).",
-                sidetrack_core::config::DEFAULT_PROXY_LISTEN
-                    .rsplit(':')
-                    .next()
-                    .unwrap_or_default(),
-                found.active_db,
-            );
-            if cfg.routing.file.is_empty() {
                 println!(
-                    "Git worktrees can't get their own database with the URL in the compose file. \
-                     For that, move it to an untracked .env file and set routing.file and routing.variable."
+                    "Detected:
+{}",
+                    found.render(proxy)
                 );
             }
-        }
-        if opts.dry_run {
-            println!("{}", cfg.to_toml()?);
-            return Ok(true);
-        }
-        if !confirm(
-            &format!(
-                "Write {} with these settings?",
-                sidetrack_core::config::CONFIG_FILE
-            ),
-            opts,
-        )? {
-            println!("Nothing changed.");
-            return Ok(true);
-        }
-        cfg.save(&root)?;
-        println!(
-            "Wrote {}. It holds no secrets and is safe to commit.",
-            sidetrack_core::config::CONFIG_FILE
-        );
-        (cfg, views.resolved.name)
-    };
-
-    let ws = Workspace::from_parts(git, cfg, Registry::open(&registry::default_path()?)?);
-    anyhow::ensure!(
-        ws.db_compose
-            .running_services()?
-            .contains(&ws.cfg.database.service),
-        "start the database first: `docker compose up -d {}`",
-        ws.cfg.database.service
-    );
-    let project = ws.reg.upsert_project(
-        &ws.root_key(),
-        &compose_project,
-        &ws.cfg.database.engine,
-        &ws.cfg.database.service,
-    )?;
-
-    // Adopt the current database for the current branch.
-    let active = ws.active_db()?.with_context(|| {
-        format!(
-            "can't read a database name from {} in {}",
-            ws.cfg.routing.variable, ws.cfg.routing.file
-        )
-    })?;
-    anyhow::ensure!(
-        ws.pg.exists(&active)?,
-        "{active} (from {}) doesn't exist on the server",
-        ws.cfg.routing.file
-    );
-    let branch = ws
-        .git
-        .current_branch()?
-        .context("check out a branch before running init")?;
-    let dirs = &ws.cfg.migrations.dirs;
-    match (
-        ws.reg.branch_by_db(project.id, &active)?,
-        ws.reg.branch_by_git(project.id, &branch)?,
-    ) {
-        (None, None) => {
-            ws.reg.insert_branch(
-                project.id,
-                &NewBranch {
-                    git_branch: branch.clone(),
-                    db_name: active.clone(),
-                    parent_id: None,
-                    base_commit: ws.git.resolve("HEAD")?,
-                    migration_files: migrations::current_files(&ws.git, dirs)?,
-                    adopted: true,
-                },
-            )?;
-            println!(
-                "Linked {branch} → {active} (assuming it has every migration in this checkout)."
-            );
-        }
-        (Some(b), _) => println!("{active} is already linked to {}.", b.git_branch),
-        (None, Some(b)) => println!("{branch} is already linked to {}.", b.db_name),
-    }
-
-    // Re-link databases sidetrack created earlier (e.g. after the registry was deleted).
-    for b in ws.git.local_branches()? {
-        if ws.reg.branch_by_git(project.id, &b)?.is_some() {
-            continue;
-        }
-        for name in [naming::db_name_for_branch(&b), naming::hashed_db_name(&b)] {
-            if ws.reg.branch_by_db(project.id, &name)?.is_none() && ws.pg.exists(&name)? {
-                ws.reg.insert_branch(
-                    project.id,
-                    &NewBranch {
-                        git_branch: b.clone(),
-                        db_name: name.clone(),
-                        parent_id: None,
-                        base_commit: ws.git.resolve(&b)?,
-                        migration_files: migrations::files_at(&ws.git, &b, dirs)?,
-                        adopted: false,
-                    },
-                )?;
-                println!("Re-linked {b} → {name}.");
-                break;
+            if proxy {
+                let url = if cfg.routing.file.is_empty() {
+                    let vars: Vec<String> = found
+                        .inline
+                        .iter()
+                        .map(|i| format!("{} ({})", i.variable, i.service))
+                        .collect();
+                    format!("{} in the compose file", vars.join(", "))
+                } else {
+                    format!("{} in {}", cfg.routing.variable, cfg.routing.file)
+                };
+                println!(
+                    "Proxy mode: point {url} at the proxy, once: host `host.docker.internal` from containers                      (`localhost` from this machine), port {}, database {}.
+                     On Linux, containers also need `extra_hosts: [\"host.docker.internal:host-gateway\"]`                      and the proxy must listen on 0.0.0.0 (routing.listen).",
+                    sidetrack_core::config::DEFAULT_PROXY_LISTEN
+                        .rsplit(':')
+                        .next()
+                        .unwrap_or_default(),
+                    found.active_db,
+                );
+                if cfg.routing.file.is_empty() {
+                    println!(
+                        "Git worktrees can't get their own database with the URL in the compose file.                          For that, move it to an untracked .env file and set routing.file and routing.variable."
+                    );
+                }
+            }
+            if opts.dry_run {
+                println!("{}", cfg.to_toml()?);
+                return Ok(true);
+            }
+            if !confirm(
+                &format!(
+                    "Write {} with these settings?",
+                    sidetrack_core::config::CONFIG_FILE
+                ),
+                opts,
+            )? {
+                println!("Nothing changed.");
+                return Ok(true);
             }
         }
     }
 
-    if !ws.cfg.routing.is_proxy() && ws.git.is_tracked(&ws.cfg.routing.file)? {
-        println!(
-            "! {} is tracked by git. sidetrack won't rewrite it; move {} into an untracked file first.",
-            ws.cfg.routing.file, ws.cfg.routing.variable
-        );
+    let (ws, said) = setup.register(Registry::open(&registry::default_path()?)?)?;
+    for line in said {
+        println!("{line}");
     }
     if !no_hook
         && !hook::is_installed(&ws.git)

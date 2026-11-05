@@ -1,5 +1,6 @@
 import type { KeyboardEvent } from "react";
-import { createsDatabase, target } from "./steps";
+import { plural } from "./format";
+import { createsDatabase, pendingOnly, target } from "./steps";
 import { sentence } from "./text";
 import type { ProjectView } from "./types";
 
@@ -8,6 +9,8 @@ export function stateLine(p: ProjectView): { text: string; problem: boolean } {
   if (p.problem) return { text: sentence(p.problem.split(";")[0]), problem: true };
   if (!p.git_branch) return { text: "Detached HEAD, so there's nothing to compare", problem: false };
   if (p.plan) {
+    const pending = pendingOnly(p.plan);
+    if (pending) return { text: `${p.active_db ?? p.git_branch} has ${plural(pending.length, "migration")} to run · plan ready`, problem: false };
     return createsDatabase(p.plan)
       ? { text: `No database for ${p.git_branch} yet · plan ready`, problem: false }
       : { text: `${p.git_branch} will use ${target(p.plan) ?? "another database"} · plan ready`, problem: false };

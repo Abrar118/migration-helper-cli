@@ -104,6 +104,11 @@ impl Compose {
         run(self.command().arg("stop").args(services))
     }
 
+    /// Start services (`up -d`), creating them if needed.
+    pub fn up(&self, services: &[String]) -> Result<()> {
+        run(self.command().args(["up", "-d"]).args(services))
+    }
+
     /// Recreate services so they pick up env file changes. `restart` would not.
     pub fn recreate(&self, services: &[String]) -> Result<()> {
         if services.is_empty() {
