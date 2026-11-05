@@ -4,7 +4,7 @@ import { ago, bytes, plural } from "./format";
 import { Proof } from "./Proof";
 import { Problem, Queries, Sheet } from "./Sheets";
 import { Code, sentence, Slug, Units } from "./text";
-import type { DbBranchView, GitBranchView, Op, Plan, ProjectDetail, ServiceView } from "./types";
+import type { DbBranchView, GitBranchView, Op, Plan, ProjectDetail, ServiceView, SnapshotView } from "./types";
 
 /** What's selected. A git branch and its DB branch are selected together. */
 type Selection = { git: string } | { db: string };
@@ -12,14 +12,16 @@ type Selection = { git: string } | { db: string };
 /** Where an action lives: a DB node, a git row, or the whole project (gc). */
 type Place = `db:${string}` | `git:${string}` | "project";
 
-/** An inline field that's open: a snapshot label or a rename target. */
-type Field = { kind: "snapshot" | "rename"; db: string } | null;
+/** An inline field that's open: a snapshot label, a reset source or a rename target. */
+type Field = { kind: "snapshot" | "reset" | "rename"; db: string } | null;
 
 /** The plan on screen instead of the tree, and the operation it came from. */
 interface Shown {
   op: Op;
   plan: Plan;
   title: string;
+  /** Problems met while planning that aren't in the plan (the proxy wouldn't start). */
+  warnings: string[];
 }
 
 /** What the planner said no to, shown where the action was chosen. */
@@ -132,8 +134,8 @@ export function ProjectPage({ root, top, planWaiting, onBack }: Props) {
       setPlanning(`${place}/${key}`);
       setRefusal(null);
       try {
-        const plan = await planOp(root, op);
-        setShown({ op, plan, title });
+        const { plan, warnings } = await planOp(root, op);
+        setShown({ op, plan, title, warnings });
         setField(null);
         // The tree may have been scrolled to its selection; a proof starts at the top, under its lead.
         main.current?.scrollTo(0, 0);
@@ -221,6 +223,7 @@ export function ProjectPage({ root, top, planWaiting, onBack }: Props) {
               op={shown.op}
               plan={shown.plan}
               title={shown.title}
+              warnings={shown.warnings}
               disk={detail.disk}
               freed={freedBytes(shown.plan, detail)}
               autoFocus
@@ -407,6 +410,13 @@ function DbTree({ detail, selected, onSelect, actions }: { detail: ProjectDetail
   ];
   // Changing a database needs the server; without it, the tree is read-only.
   const nodeActions = (b: DbBranchView) => (d.problem ? null : <NodeActions b={b} detail={d} actions={actions} />);
+  // A snapshot of the selected branch can be deleted, unless another worktree owns the branch.
+  const snapAction = (b: DbBranchView, s: SnapshotView) =>
+    d.problem || b.worktree ? null : (
+      <PlanButton actions={actions} place={`db:${b.db_name}`} label={`snapshot-rm-${s.db_name}`} op={{ op: "snapshot_remove", name: s.db_name }} title={`Delete snapshot ${s.seq} of ${b.db_name}`}>
+        Delete
+      </PlanButton>
+    );
 
   return (
     <Sheet label={`Database branches of ${d.name}`} title="Database branches">
@@ -417,7 +427,7 @@ function DbTree({ detail, selected, onSelect, actions }: { detail: ProjectDetail
         </p>
       ) : (
         <ul className="tree" role="tree" aria-label="Database branches" onKeyDown={arrows(flatten(roots), selected, focus)}>
-          {roots.map((n) => <TreeNode key={n.b.db_name} n={n} level={1} selected={selected} onSelect={onSelect} actions={nodeActions} />)}
+          {roots.map((n) => <TreeNode key={n.b.db_name} n={n} level={1} selected={selected} onSelect={onSelect} actions={nodeActions} snapAction={snapAction} />)}
         </ul>
       )}
       <Slug
@@ -434,12 +444,14 @@ function DbTree({ detail, selected, onSelect, actions }: { detail: ProjectDetail
   );
 }
 
-function TreeNode({ n, level, selected, onSelect, actions }: {
+function TreeNode({ n, level, selected, onSelect, actions, snapAction }: {
   n: Node;
   level: number;
   selected: string | null;
   onSelect: (db: string) => void;
   actions: (b: DbBranchView) => ReactNode;
+  /** Shown at the end of each snapshot's line while its branch is selected. */
+  snapAction: (b: DbBranchView, s: SnapshotView) => ReactNode;
 }) {
   const b = n.b;
   const on = b.db_name === selected;
@@ -463,6 +475,7 @@ function TreeNode({ n, level, selected, onSelect, actions }: {
                 ago(s.created_at),
                 s.on_server === false ? <strong>not on the server</strong> : null,
               ].filter(Boolean))}
+              {on && <span className="snap-action">{snapAction(b, s)}</span>}
             </li>
           ))}
         </ul>
@@ -470,7 +483,7 @@ function TreeNode({ n, level, selected, onSelect, actions }: {
       {on && actions(b)}
       {n.children.length > 0 && (
         <ul role="group" className="children">
-          {n.children.map((c) => <TreeNode key={c.b.db_name} n={c} level={level + 1} selected={selected} onSelect={onSelect} actions={actions} />)}
+          {n.children.map((c) => <TreeNode key={c.b.db_name} n={c} level={level + 1} selected={selected} onSelect={onSelect} actions={actions} snapAction={snapAction} />)}
         </ul>
       )}
     </li>
@@ -529,10 +542,14 @@ function NodeActions({ b, detail, actions }: { b: DbBranchView; detail: ProjectD
     );
   }
   const parent = b.parent ? detail.db_branches.find((p) => p.db_name === b.parent && p.on_server !== false) : undefined;
-  const snaps = b.snapshots.filter((s) => s.on_server !== false);
+  // Like `sidetrack reset --to`: the parent, or any snapshot in the project.
+  const resetTo = [
+    ...b.snapshots.filter((s) => s.on_server !== false).map((s) => ({ s, of: b })),
+    ...detail.db_branches.filter((o) => o !== b).flatMap((o) => o.snapshots.filter((s) => s.on_server !== false).map((s) => ({ s, of: o }))),
+  ];
   const field = actions.field?.db === b.db_name ? actions.field.kind : null;
   const refusal = actions.refusal?.place === place ? actions.refusal.message : null;
-  const open = (kind: "snapshot" | "rename") => actions.setField(field === kind ? null : { kind, db: b.db_name });
+  const open = (kind: "snapshot" | "reset" | "rename") => actions.setField(field === kind ? null : { kind, db: b.db_name });
   const busy = actions.planning !== null;
 
   return (
@@ -543,16 +560,11 @@ function NodeActions({ b, detail, actions }: { b: DbBranchView; detail: ProjectD
             Snapshot
           </button>
         )}
-        {b.active && parent && (
-          <PlanButton actions={actions} place={place} label="reset-parent" op={{ op: "reset", to: null, parent: true }} title={`Reset ${b.db_name} to ${parent.db_name}`}>
-            Reset to <Db>{parent.db_name}</Db>
-          </PlanButton>
+        {b.active && (parent || resetTo.length > 0) && (
+          <button type="button" className="text-button" aria-expanded={field === "reset"} disabled={busy} onClick={() => open("reset")}>
+            Reset
+          </button>
         )}
-        {b.active && snaps.map((s) => (
-          <PlanButton key={s.db_name} actions={actions} place={place} label={`reset-${s.db_name}`} op={{ op: "reset", to: s.db_name, parent: false }} title={`Reset ${b.db_name} to snapshot ${s.seq}`}>
-            Reset to snapshot {s.seq}
-          </PlanButton>
-        ))}
         <button type="button" className="text-button" aria-expanded={field === "rename"} disabled={busy} onClick={() => open("rename")}>
           Rename
         </button>
@@ -575,6 +587,17 @@ function NodeActions({ b, detail, actions }: { b: DbBranchView; detail: ProjectD
           onSubmit={(v) => actions.show(place, "snapshot", { op: "snapshot", label: v || null }, `Snapshot ${b.db_name}`)}
         />
       )}
+      {field === "reset" && (
+        <ResetField
+          b={b}
+          parent={parent}
+          snapshots={resetTo}
+          planning={actions.planning === `${place}/reset`}
+          disabled={busy}
+          onCancel={() => actions.setField(null)}
+          onSubmit={(op, title) => actions.show(place, "reset", op, title)}
+        />
+      )}
       {field === "rename" && (
         <InlineField
           id={`rename-${b.db_name}`}
@@ -590,6 +613,52 @@ function NodeActions({ b, detail, actions }: { b: DbBranchView; detail: ProjectD
       )}
       {refusal && <p className="query"><strong>Query</strong> <Code text={refusal} /></p>}
     </div>
+  );
+}
+
+/** Choose what the active database is reset to: its parent or any snapshot in the project. */
+function ResetField({ b, parent, snapshots, planning, disabled, onCancel, onSubmit }: {
+  b: DbBranchView;
+  parent: DbBranchView | undefined;
+  snapshots: { s: SnapshotView; of: DbBranchView }[];
+  planning: boolean;
+  disabled: boolean;
+  onCancel: () => void;
+  onSubmit: (op: Op, title: string) => void;
+}) {
+  const [to, setTo] = useState(parent ? "" : snapshots[0]?.s.db_name ?? "");
+  const select = useRef<HTMLSelectElement>(null);
+  useEffect(() => select.current?.focus(), []);
+  const snap = (s: SnapshotView) => `Snapshot ${s.seq}${s.label ? `, “${s.label}”` : ""} (${s.db_name})`;
+  const own = snapshots.filter((x) => x.of === b);
+  const others = snapshots.filter((x) => x.of !== b);
+  const submit = (e: FormEvent) => {
+    e.preventDefault();
+    const picked = snapshots.find((x) => x.s.db_name === to);
+    if (picked) onSubmit({ op: "reset", to, parent: false }, `Reset ${b.db_name} to snapshot ${picked.s.seq} of ${picked.of.db_name}`);
+    else if (parent) onSubmit({ op: "reset", to: null, parent: true }, `Reset ${b.db_name} to ${parent.db_name}`);
+  };
+  return (
+    <form className="inline-field" onSubmit={submit}>
+      <label htmlFor={`reset-${b.db_name}`}>Replace it with a fresh copy of</label>
+      <div className="field-row">
+        <select id={`reset-${b.db_name}`} ref={select} value={to} onChange={(e) => setTo(e.target.value)}>
+          {parent && <option value="">Its parent, {parent.db_name}</option>}
+          {own.length > 0 && (
+            <optgroup label={`Snapshots of ${b.db_name}`}>
+              {own.map(({ s }) => <option key={s.db_name} value={s.db_name}>{snap(s)}</option>)}
+            </optgroup>
+          )}
+          {others.length > 0 && (
+            <optgroup label="Snapshots of other branches">
+              {others.map(({ s, of }) => <option key={s.db_name} value={s.db_name}>{snap(s)}, of {of.db_name}</option>)}
+            </optgroup>
+          )}
+        </select>
+        <button type="submit" className="secondary" disabled={disabled}>{planning ? "Planning…" : "Show the plan"}</button>
+        <button type="button" className="text-button" onClick={onCancel}>Cancel</button>
+      </div>
+    </form>
   );
 }
 

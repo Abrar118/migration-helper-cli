@@ -159,11 +159,18 @@ export interface ProjectDetail {
   disk: DiskSpace | null;
 }
 
+/** `plan_op`'s answer: the plan, plus problems met while planning (the proxy wouldn't start). */
+export interface Planned {
+  plan: Plan;
+  warnings: string[];
+}
+
 /** An operation to plan and apply (`ops::Op` on the Rust side), mirroring the CLI command. */
 export type Op =
   | { op: "switch" }
   | { op: "create"; git_branch: string; from: string | null; empty: boolean }
   | { op: "snapshot"; label: string | null }
+  | { op: "snapshot_remove"; name: string }
   | { op: "reset"; to: string | null; parent: boolean }
   | { op: "delete"; name: string }
   | { op: "rename"; old: string; new: string }

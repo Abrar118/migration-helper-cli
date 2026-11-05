@@ -27,6 +27,8 @@ Last updated 2026-11-05. Read `CLAUDE.md` first, then this.
 | TLS between the app and the proxy | merged (PR #19) |
 | Handoff update after PRs #19–#21 | merged (PR #22) |
 | Approvals from the git hook: with no TTY, the hook tells the open app, which shows the switch proof | merged (PR #23) |
+| Handoff update after PR #23 | merged (PR #24) |
+| **Desktop app: reset to any snapshot, delete a snapshot, proxy-start problems on the proof** | **this PR** |
 
 `main` is protected. Every PR needs one approval, including a code-owner review (`@Abrar118`). The owner can bypass the rules. Force-pushes and deletion are blocked.
 
@@ -111,12 +113,15 @@ See plan-v1.md, "Local proxy (v2)", decisions 17–25.
 **Project view (PR #16):** "Open project" on All projects. Git branches on the left (checked-out first, last 5 commits under the selected one, container status at the foot); the DB branch tree on the right (parent → child, snapshots, which worktree uses each DB, DBs whose git branch is gone or that aren't on the server). Selecting either side selects its partner. Built by a subagent inside the existing Press Proof contract, without a new sketch round.
 
 **Plans for other operations (PR #17):** `ops.rs` adds `plan_op` / `apply_op` keyed by an `Op` enum (switch, create, snapshot, reset, delete, rename, gc), mirroring the CLI's `plan_command`; `apply_switch` is folded in. Actions sit on the selected DB node, on a git branch with no DB (create), and "Clean up" (gc) in the lead. Destructive plans render for the first time: drops in spot, Apply disabled until the plan-worded checkbox is ticked.
-- Gaps: reset only offers the node's parent or its own snapshots (the CLI's `--to` takes any); no `snapshot rm`; if `plan_op` can't start the proxy, the reason only goes to stderr.
+- The gaps listed here were closed in the PR after #24:
+  - **Reset:** opens a picker with the parent and every snapshot in the project, like `reset --to`.
+  - **`snapshot rm`:** each snapshot of the selected node has a Delete.
+  - **Proxy-start problems:** if `plan_op` can't start the proxy, the reason is a Query on the proof (`ops::Planned`).
 
 **Sheet devices and fixes (PR #20):** a registration target on in-sync / "nothing to clean up" sheets, a step-colour tint ramp in Settings, the sign-off always reachable on tall proofs, lead and path wrapping, Escape after a failed apply.
 - `.impeccable/design.json` is older than `DESIGN.md` and lacks the project view and new devices; `/impeccable document` would refresh it.
 
-**Still to check on a real machine** (owner, `npm run tauri dev`): the project view, including a project with the db container stopped and one with a linked worktree; applying a delete and a reset; an `sslmode=require` app through the proxy; with the app open, check out a branch in a GUI git client and approve the switch in the app.
+**Still to check on a real machine** (owner, `npm run tauri dev`): the project view, including a project with the db container stopped and one with a linked worktree; applying a delete, a reset (including to another branch's snapshot) and a snapshot delete; an `sslmode=require` app through the proxy; with the app open, check out a branch in a GUI git client and approve the switch in the app.
 
 **Dev pitfall:** `npm run tauri dev` loads the UI from `localhost:5173` (`devUrl`). If an older Vite server from another checkout or worktree still holds that port, the app shows that checkout's UI. If that checkout is gone, it shows "Failed to fetch dynamically imported module". Stop the old server first.
 
@@ -125,7 +130,7 @@ See plan-v1.md, "Local proxy (v2)", decisions 17–25.
 - Not checked yet: the whole loop from a GUI client into the UI.
 - Gaps: while a project is open in the project view, the app only refreshes; if it's the same project, "See the switch plan" appears. A linked worktree's checkout only prints the hint.
 
-**Not built yet:** nothing from the v1.5/v2 app list. The next pieces are the PR #17 gaps above, then MySQL (below).
+**Not built yet:** nothing from the v1.5/v2 app list. Next is MySQL (below), unless the owner's checks turn something up.
 
 **Core gap, fixed in PR #14:** `Workspace::annotate_schema` only looked at `RewriteEnv` steps, so proxy-mode switches never got a schema summary. It now reads `SetProxyTarget` too (`schema_pair`, with a unit test).
 
