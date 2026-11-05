@@ -4,6 +4,7 @@ import { bytes, gb, plural, seconds } from "./format";
 import { addedBytes, command, createsDatabase, describe, ink, isBookkeeping, label, meta, pendingOnly, target, visibleSteps } from "./steps";
 import type { DiskSpace, Op, Plan, Report, Step } from "./types";
 import { Code, sentence, Slug } from "./text";
+import { usePlain } from "./look";
 
 type Phase =
   | { at: "review" }
@@ -36,6 +37,7 @@ interface Props {
 
 /** A plan drawn as a press proof: colour bar, steps, facts, slug line, sign-off. */
 export function Proof({ root, name, op, plan, title, warnings = [], disk, freed = 0, autoFocus, onStart, onClose }: Props) {
+  const plain = usePlain();
   const [phase, setPhase] = useState<Phase>({ at: "review" });
   const [confirmed, setConfirmed] = useState(false);
   const [signedAt, setSignedAt] = useState<string | null>(null);
@@ -121,7 +123,7 @@ export function Proof({ root, name, op, plan, title, warnings = [], disk, freed 
     <section className="sheet" aria-label={`Plan for ${name}`}>
       <i className="crop tl" /><i className="crop tr" /><i className="crop bl" /><i className="crop br" />
 
-      {steps.length > 0 && <ol className="bar" aria-hidden="true">
+      {!plain && steps.length > 0 && <ol className="bar" aria-hidden="true">
         {steps.map(({ step, index }, i) => (
           <li key={index} className={`patch ink-${ink(step)}`} data-state={patch(i, index)}>
             <span className="patch-ink" />
@@ -133,7 +135,9 @@ export function Proof({ root, name, op, plan, title, warnings = [], disk, freed 
 
       <div className="sheet-body">
         <h2 ref={heading} tabIndex={-1}>{title}</h2>
+        {plain && <BeforeAfter plan={plan} drops={drops} />}
 
+        {plain && <h3 className="steps-head">What happens when you apply</h3>}
         <ol className="steps">
           {steps.map(({ step, index }, i) => {
             const t = timing.get(index);
@@ -143,6 +147,7 @@ export function Proof({ root, name, op, plan, title, warnings = [], disk, freed 
                 <b className={`num ink-${ink(step)}`}>{i + 1}</b>
                 <span className="step-text" title={command(step)}>{describe(step)}</span>
                 {m && <span className="meta">{m}</span>}
+                {plain && <span className={`step-kind ink-${ink(step)}`}>{label(step)}</span>}
               </li>
             );
           })}
@@ -151,7 +156,14 @@ export function Proof({ root, name, op, plan, title, warnings = [], disk, freed 
           <p className="records">Also updates sidetrack's records ({records === 1 ? "1 entry" : `${records} entries`}).</p>
         )}
 
-        {(queries.length > 0 || plan.notes.length > 0) && (
+        {plain && (queries.length > 0 || plan.notes.length > 0) && (
+          <div className="callout">
+            <h3>Worth knowing</h3>
+            {queries.map((w) => <p key={w}><Code text={w} /></p>)}
+            {plan.notes.map((n) => <p key={n} className="note"><Code text={sentence(n)} /></p>)}
+          </div>
+        )}
+        {!plain && (queries.length > 0 || plan.notes.length > 0) && (
           <div className="queries">
             {queries.map((w) => (
               <p key={w} className="query"><strong>Query</strong> <Code text={w} /></p>
@@ -167,7 +179,7 @@ export function Proof({ root, name, op, plan, title, warnings = [], disk, freed 
             <Fact plan={plan} drops={drops} />
           </div>
           <div>
-            <h3>Disk on the Docker host</h3>
+            <h3>{plain ? "Free disk space on the Docker host" : "Disk on the Docker host"}</h3>
             {disk ? (
               <p className="big">
                 {gb(disk.free_bytes)}
@@ -177,16 +189,29 @@ export function Proof({ root, name, op, plan, title, warnings = [], disk, freed 
             ) : (
               <p className="fact-v">Unknown</p>
             )}
+            {plain && disk && (
+              <p className="fact-sub">
+                {added === freed ? "Unchanged: nothing is copied or deleted." : added > freed ? `This plan copies ${bytes(added - freed)} of data.` : `Deleting frees ${bytes(freed - added)}.`}
+              </p>
+            )}
           </div>
         </div>
       </div>
 
       <footer className="sheet-foot" ref={foot} data-stuck={stuck || undefined}>
-        <Slug items={slug} />
+        {plain ? (
+          <p className="plan-sum">
+            {plural(steps.length, "step")} · {added > 0 ? `copies ${bytes(added)}` : "no copy"} · {destructive ? `deletes ${plural(drops.length, "database")}` : "nothing is deleted"}
+            {report?.outcome.status === "done" && signedAt && ` · applied at ${signedAt}`}
+          </p>
+        ) : (
+          <Slug items={slug} />
+        )}
         <div className={`signoff${destructive ? " spot" : ""}`} aria-live="polite">
           {phase.at === "review" && (
             <>
-              <h3>OK to apply</h3>
+              <h3>{plain ? (destructive ? "Ready to apply, and it deletes data" : "Ready to apply") : "OK to apply"}</h3>
+              {plain && !destructive && <p className="signoff-note">Nothing runs until you click Apply.</p>}
               {destructive && (
                 <label className="confirm">
                   <input type="checkbox" checked={confirmed} onChange={(e) => setConfirmed(e.target.checked)} />
@@ -269,6 +294,7 @@ function names(xs: string[]): ReactNode {
 
 /** The left fact: what the plan leaves behind. */
 function Fact({ plan, drops }: { plan: Plan; drops: string[] }) {
+  const plain = usePlain();
   const branch = find(plan, "register_branch");
   switch (plan.kind) {
     case "create": {
@@ -335,7 +361,7 @@ function Fact({ plan, drops }: { plan: Plan; drops: string[] }) {
       if (plan.schema) {
         return (
           <>
-            <h3>Schema change</h3>
+            <h3>{plain ? "Tables and columns the app will see" : "Schema change"}</h3>
             <SchemaFacts plan={plan} />
           </>
         );
@@ -411,7 +437,80 @@ function doneText(plan: Plan, project: string, drops: string[]): ReactNode {
   }
 }
 
+/**
+ * The Canvas look's opening: what's true now and what will be after Apply,
+ * with one sentence on why. Only for plans that move or copy a database.
+ */
+function BeforeAfter({ plan, drops }: { plan: Plan; drops: string[] }) {
+  const route = plan.steps.find((s): s is Extract<Step, { type: "rewrite_env" | "set_proxy_target" }> => s.type === "rewrite_env" || s.type === "set_proxy_target");
+  const clone = find(plan, "clone_database");
+  const branch = find(plan, "register_branch");
+  let now: [string, ReactNode], after: [string, ReactNode], why: ReactNode;
+  if (route) {
+    now = ["The app uses now", <Db>{route.from_db}</Db>];
+    after = ["After you apply", <Db>{route.to_db}</Db>];
+    why = clone
+      ? <><Db>{branch?.git_branch}</Db> has no database yet, so a copy of <Db>{clone.source}</Db> is made for it first. Then the app is pointed at it.</>
+      : <>The checked-out git branch already has its own database, so the app is pointed at it. <Db>{route.from_db}</Db> is kept as it is; switching back later is just as quick.</>;
+  } else if (plan.kind === "create" && branch) {
+    now = ["Copied from", clone ? <Db>{clone.source}</Db> : "Nothing (empty)"];
+    after = ["New database", <Db>{branch.db_name}</Db>];
+    why = <>A database for <Db>{branch.git_branch}</Db>, ready for when you check it out. The app keeps using its current database.</>;
+  } else if (plan.kind === "reset" && clone) {
+    const db = find(plan, "rename_database")?.to;
+    now = ["Database", <Db>{db}</Db>];
+    after = ["Replaced with a fresh copy of", <Db>{clone.source}</Db>];
+    why = <>Everything written to <Db>{db}</Db> since it was made is thrown away. It keeps its name, so the app doesn't need to change.</>;
+  } else if (drops.length > 0) {
+    now = ["Deletes", drops.length === 1 ? <Db>{drops[0]}</Db> : `${drops.length} databases`];
+    after = ["Afterwards", "Gone from the server"];
+    why = <>Deleted databases can't be brought back. Check the list below before you apply.</>;
+  } else {
+    return null;
+  }
+  return (
+    <div className="change">
+      <div className="change-row">
+        <div className="change-box"><span className="change-k">{now[0]}</span><span className="change-v">{now[1]}</span></div>
+        <span className="change-arrow" aria-hidden="true">→</span>
+        <div className="change-box after"><span className="change-k">{after[0]}</span><span className="change-v">{after[1]}</span></div>
+      </div>
+      <p className="change-why">{why}</p>
+    </div>
+  );
+}
+
 function SchemaFacts({ plan }: { plan: Plan }) {
+  const plain = usePlain();
+  if (plain && plan.schema) {
+    const s = plan.schema;
+    const short = (t: string) => t.replace(/^public\./, "");
+    const rows: [boolean, string][] = [
+      ...s.added_tables.map((t): [boolean, string] => [true, `table ${short(t)}`]),
+      ...s.removed_tables.map((t): [boolean, string] => [false, `table ${short(t)}`]),
+      ...s.changed_tables.flatMap((c) => [
+        ...c.added_columns.map((col): [boolean, string] => [true, `column ${short(c.table)}.${col.split(" ")[0]}`]),
+        ...c.removed_columns.map((col): [boolean, string] => [false, `column ${short(c.table)}.${col.split(" ")[0]}`]),
+      ]),
+    ];
+    return (
+      <>
+        <p className="fact-sub">
+          <Db>{s.to_db}</Db> compared with <Db>{s.from_db}</Db>, the one the app uses now.
+        </p>
+        {rows.length === 0 ? (
+          <p className="fact-v">Same tables and columns</p>
+        ) : (
+          <ul className="schema-plain">
+            {rows.slice(0, 6).map(([add, l]) => (
+              <li key={l}><span className={`badge ${add ? "ok" : "bad"}`}>{add ? "added" : "not there"}</span> <span className="db">{l}</span></li>
+            ))}
+            {rows.length > 6 && <li className="fact-sub">and {rows.length - 6} more</li>}
+          </ul>
+        )}
+      </>
+    );
+  }
   const s = plan.schema!;
   const short = (t: string) => t.replace(/^public\./, "");
   const lines: string[] = [

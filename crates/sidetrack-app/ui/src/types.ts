@@ -52,6 +52,8 @@ export interface Plan {
 export interface DiskSpace {
   free_bytes: number;
   total_bytes: number;
+  /** Docker Desktop: the numbers are the host drive holding its VM disk. */
+  host_limited?: boolean;
 }
 
 export interface MigrationStatus {
@@ -137,10 +139,42 @@ export interface DbBranchView {
   snapshots: SnapshotView[];
 }
 
+export interface VolumeView {
+  kind: string | null;
+  source: string | null;
+  target: string | null;
+}
+
 export interface ServiceView {
   name: string;
   database: boolean;
+  /** Restarted or re-pointed when the database changes: it reads the DB name. */
+  routed: boolean;
   running: boolean | null;
+  image: string | null;
+  /** Build context, for a service built from the repo. */
+  build: string | null;
+  depends_on: string[];
+  volumes: VolumeView[];
+}
+
+/** How the project is put together (`sidetrack.toml`, plus compose's project name). */
+export interface StructureView {
+  compose_project: string | null;
+  compose_files: string[];
+  engine: string;
+  db_service: string;
+  db_user: string;
+  routing_mode: string;
+  routing_file: string;
+  routing_variable: string;
+  listen: string | null;
+  restart: string[];
+  migrations_tool: string;
+  migrations_dirs: string[];
+  migrations_command: string;
+  seed: string | null;
+  main_branch: string | null;
 }
 
 /** One project's git branches and DB branches (`project_detail`). */
@@ -155,6 +189,7 @@ export interface ProjectDetail {
   git_branches: GitBranchView[];
   db_branches: DbBranchView[];
   services: ServiceView[];
+  structure: StructureView;
   warnings: string[];
   disk: DiskSpace | null;
 }

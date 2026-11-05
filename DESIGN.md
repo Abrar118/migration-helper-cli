@@ -162,6 +162,8 @@ components:
 
 ## Overview
 
+The app has two looks, picked in Settings → Look and stored per viewer (`sidetrack.look`): **Press Proof** (the default, described first and in the tokens above) and **Canvas** (plain type, node canvases; see "The Canvas look" below). Both draw the same data and the same plans, and both need an Apply before anything runs. Light and dark apply to each.
+
 **Creative North Star: "The Press Proof"**
 
 Every plan is a prepress proof laid on a light table. It sits inside thin crop marks, opens with a colour bar of numbered patches, lists its steps, states the facts (schema change, disk before and after), carries a typed slug line, and ends in an "OK to apply" box. Nothing runs until the proof is signed. The world refuses the category default of sidebar, list, detail and a blue Apply button in a drawer.
@@ -323,7 +325,50 @@ A 330px box with a 2px key border (spot on drop plans) holding a 22px bold headi
 ### Motion: the ink wipe
 Patch ink is a full-bleed layer revealed with `clip-path: inset(0 100% 0 0)` → `inset(0 0 0 0)` over 700ms ease-out, as if laid down left to right. A running patch animates toward 78% coverage over 9s and holds there until the step finishes, then completes. Patch text changes colour over 300ms. Under `prefers-reduced-motion: reduce`, transitions on patches and buttons are removed and a running patch sits still at half coverage (`inset(0 50% 0 0)`), so progress still reads without movement.
 
+## The Canvas look
+
+For people who find Press Proof's big type and inks too much. Plain system type at normal sizes, calm neutrals, and each project shown as node canvases you can drag around. Built in `ui/src/canvas.css` (everything scoped to `:root[data-look="canvas"]`), `Canvas.tsx` (the canvas engine) and `ProjectCanvas.tsx` (the sections). Shared parts such as the plan read `usePlain()` (`look.ts`) to switch wording.
+
+### Tokens
+- **Type:** the system stack (`-apple-system, Segoe UI, Roboto, Ubuntu, Cantarell, Noto Sans`) at 13px/1.5; page titles 18px 600; small text 12px. Code and database names in `ui-monospace` (SF Mono, Cascadia Mono, Menlo, Consolas) at 12px. No display sizes; the biggest number on a plan is 22px.
+- **Neutrals (light / dark):** ground `#f6f8fa` / `#0d1117`, panel `#ffffff` / `#151b23`, ink `#1f2328` / `#e6edf3`, soft `#59636e` / `#9198a1`, rule `#d1d9e0` / `#3d444d`, hover `#eef1f4` / `#212830`.
+- **Roles:** accent blue `#0969da` / `#4493f8` for selection, links and focus; green `#1a7f37` / `#3fb950` for running and Apply; amber `#9a6700` / `#d29922` for "worth knowing"; red `#cf222e` / `#f85149` for stopped, deletes and a drop plan's Apply. Each has a soft tint for badges and callouts.
+- **Node types (light / dark),** shown as a 7% tint and a half-strength border: git `#8250df` / `#a371f7`, database `#0969da` / `#4493f8`, snapshot `#1b7c83` / `#39c5cf`, image `#bc4c00` / `#f0883e`, source folder `#9a6700` / `#d29922`, container `#bf3989` / `#db61a2`, database container `#0550ae` / `#79c0ff`, volume `#1a7f37` / `#3fb950`, mounted folder `#6e7781` / `#9198a1`, `sidetrack.toml` `#57606a` / `#b1bac4`, routing `#cf6a00` / `#ffa657`, migrations `#7d4e00` / `#e3b341`.
+- **Shape:** 6px radius on controls, 8px on nodes, cards and panels; 1px borders; one soft shadow (`0 8px 24px` at 12%) only on things that float (the node card, the dock, the key).
+
+### Layout
+- **Sidebar** (240px, folds to a 48px strip with its toggle or Ctrl+B): Projects, each with a state dot (green in sync, amber plan waiting, red can't read). The selected project opens its sections under it: Overview, Branches, Databases (with a count), Containers, Structure. Add project, then Settings and disk space at the foot. Nothing in it navigates while a plan applies.
+- **Pane:** a header (18px title, the lead sentence in soft text, then path · mode and buttons: See the switch plan, Clean up, Refresh), then the section.
+- **Overview** is the project's switch plan, or its in-sync or problem sheet. The other sections are canvases.
+
+### Canvases
+- **Branches:** git branches (left) linked to their databases (right) by "uses" edges. A branch with no database has a dashed border and a "no database yet" badge.
+- **Databases:** the DB tree left to right ("copied to" edges), snapshots stacked under their database with dashed borders and dashed edges.
+- **Containers:** images and source folders → containers → volumes and mounted folders, plus a Databases node. Edges say "runs as", "built into", "mounts", "holds" and "reads <variable>". "needs" (depends_on) edges appear only while one of their services is selected. Paths inside the project are shown as `./sub/dir`.
+- **Structure:** repo → `sidetrack.toml` → compose, routing, migrations and the database → app services, migration folders and the database the app uses.
+- **Every canvas:** drag a node to move it (saved per project and section); drag the background or scroll to pan; Ctrl+scroll to zoom; Fit and Reset layout bottom right. A graph wider than the pane fits itself on first view, leaving room for the key. Edge labels sit on the curve's midpoint with a halo in the ground colour, and turn blue with the edge when an end is selected.
+- **Key:** a card pinned top right, listing only the types on that canvas; "Hide key" folds it (remembered).
+
+### Acting on a canvas
+- **Node card:** clicking a node opens a card under it with that node's actions (the same fields as Press Proof: snapshot label, reset source, rename, create from). A second click, a click on empty canvas, or Escape closes it.
+- **Dock:** drop targets float bottom centre: Snapshot / Reset the app's database to it / Delete on Databases, Create from closest match / Create empty on Branches. While dragging, targets that take the node turn blue (red for Delete), the rest grey out, and the hint names the plan ("Drop to plan: delete old_checkout_db"). Dropping a git branch on a database copies it for that branch; a snapshot or the parent onto the app's database resets it.
+- **A drop only plans.** It opens the plan in place of the canvas; nothing runs until Apply.
+- **Details panel** (bottom, 180px, hideable and remembered): Details, Commits, Warnings tabs for the selected node.
+
+### A plan in the Canvas look
+No colour bar, crop marks or slug. In order: the title; a now → after pair of boxes ("The app uses now" → "After you apply", or the create, reset or delete equivalent) with one sentence on why; "What happens when you apply" over the numbered steps, each with a coloured kind chip (Copy, Repoint, Restart, Migrate, Drop…); records line; a "Worth knowing" amber callout for warnings and notes; "Tables and columns the app will see" with added / not there badges and what is compared with what; free disk space with a sentence on the change; then a plain summary ("4 steps · copies 7.3 MB · nothing is deleted") and the sign-off ("Ready to apply / Nothing runs until you click Apply", or "Ready to apply, and it deletes data" with the red Apply and the confirm box).
+
+### Canvas rules
+- **Do** keep type at 12 to 18px; size never carries hierarchy past the page title.
+- **Do** colour a node only by its type, and name every type used on a canvas in its key.
+- **Do** label every edge with its relation, in two words or fewer.
+- **Do** keep every drag action available from the node card too, for keyboard users.
+- **Don't** reuse Press Proof's devices (crop marks, colour bar, slug, registration target, process inks) in this look.
+- **Don't** use colour on a node for state; state goes in a badge or a dot.
+
 ## Do's and Don'ts
+
+These are Press Proof's rules; the Canvas look has its own above.
 
 ### Do:
 - **Do** show every operation as a proof with an "OK to apply" sign-off before anything runs.

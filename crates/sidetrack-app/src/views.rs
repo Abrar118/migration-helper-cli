@@ -7,6 +7,7 @@ use std::path::{Path, PathBuf};
 
 use anyhow::Result;
 use serde::Serialize;
+use sidetrack_core::compose::ConfigView;
 use sidetrack_core::git::Commit;
 use sidetrack_core::plan::Plan;
 use sidetrack_core::planner::{DiskSpace, MigrationStatus, World};
@@ -147,8 +148,11 @@ pub struct ProjectDetail {
     pub git_branches: Vec<GitBranchView>,
     /// Oldest first; `parent` links them into a tree.
     pub db_branches: Vec<DbBranchView>,
-    /// The database service, then the app services sidetrack restarts.
+    /// The database service, the app services sidetrack restarts, then the
+    /// rest of the compose project's services.
     pub services: Vec<ServiceView>,
+    /// How the project is wired: compose, routing, migrations (from `sidetrack.toml`).
+    pub structure: StructureView,
     /// Registry and server disagree (never fixed automatically).
     pub warnings: Vec<String>,
     /// Disk where the database container keeps its data.
@@ -202,8 +206,48 @@ pub struct SnapshotView {
 pub struct ServiceView {
     pub name: String,
     pub database: bool,
+    /// Restarted (or re-pointed) when the database changes: it reads the DB name.
+    pub routed: bool,
     /// `None` when Docker couldn't be asked.
     pub running: Option<bool>,
+    /// From `docker compose config`; `None` when it couldn't be read or isn't set.
+    pub image: Option<String>,
+    /// The build context, for a service built from the repo.
+    pub build: Option<String>,
+    pub depends_on: Vec<String>,
+    pub volumes: Vec<VolumeView>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct VolumeView {
+    /// `volume`, `bind`, `tmpfs`, …
+    pub kind: Option<String>,
+    /// The named volume or host path.
+    pub source: Option<String>,
+    /// The path inside the container.
+    pub target: Option<String>,
+}
+
+/// The parts of `sidetrack.toml` that say how the project is put together.
+#[derive(Debug, Serialize)]
+pub struct StructureView {
+    /// The compose project's name, when compose could be read.
+    pub compose_project: Option<String>,
+    /// Extra `-f` files; empty means compose's defaults.
+    pub compose_files: Vec<String>,
+    pub engine: String,
+    pub db_service: String,
+    pub db_user: String,
+    pub routing_mode: String,
+    pub routing_file: String,
+    pub routing_variable: String,
+    pub listen: Option<String>,
+    pub restart: Vec<String>,
+    pub migrations_tool: String,
+    pub migrations_dirs: Vec<String>,
+    pub migrations_command: String,
+    pub seed: Option<String>,
+    pub main_branch: Option<String>,
 }
 
 pub fn project_detail(root: &str) -> Result<ProjectDetail> {
@@ -300,24 +344,73 @@ pub fn project_detail(root: &str) -> Result<ProjectDetail> {
         Some(w) => Some(w.running_services.clone()),
         None => ws.compose.running_services().ok(),
     };
-    let db_service = &ws.cfg.database.service;
+    let cfg = &ws.cfg;
+    let db_service = &cfg.database.service;
+    let model = ws.compose.config(ConfigView::Resolved).ok();
     let mut names = vec![db_service.clone()];
     names.extend(
-        ws.cfg
-            .routing
+        cfg.routing
             .restart
             .iter()
             .filter(|s| *s != db_service)
             .cloned(),
     );
+    if let Some(m) = &model {
+        names.extend(
+            m.services
+                .keys()
+                .filter(|s| !names.contains(s))
+                .cloned()
+                .collect::<Vec<_>>(),
+        );
+    }
     let services = names
         .into_iter()
-        .map(|name| ServiceView {
-            running: running.as_ref().map(|r| r.contains(&name)),
-            database: &name == db_service,
-            name,
+        .map(|name| {
+            let svc = model.as_ref().and_then(|m| m.services.get(&name));
+            ServiceView {
+                running: running.as_ref().map(|r| r.contains(&name)),
+                database: &name == db_service,
+                routed: cfg.routing.restart.contains(&name),
+                image: svc.and_then(|s| s.image.clone()),
+                build: svc.and_then(|s| s.build.as_ref()?.context.as_deref().map(tilde)),
+                depends_on: svc.map(|s| s.depends_on()).unwrap_or_default(),
+                volumes: svc
+                    .map(|s| {
+                        s.volumes
+                            .iter()
+                            .map(|v| VolumeView {
+                                kind: v.kind.clone(),
+                                source: v.source.as_deref().map(tilde),
+                                target: v.target.clone(),
+                            })
+                            .collect()
+                    })
+                    .unwrap_or_default(),
+                name,
+            }
         })
         .collect();
+    let structure = StructureView {
+        compose_project: model
+            .as_ref()
+            .map(|m| m.name.clone())
+            .filter(|n| !n.is_empty()),
+        compose_files: cfg.compose.files.clone(),
+        engine: cfg.database.engine.clone(),
+        db_service: db_service.clone(),
+        db_user: cfg.database.user.clone(),
+        routing_mode: cfg.routing.mode.clone(),
+        routing_file: cfg.routing.file.clone(),
+        routing_variable: cfg.routing.variable.clone(),
+        listen: cfg.routing.listen.clone(),
+        restart: cfg.routing.restart.clone(),
+        migrations_tool: cfg.migrations.tool.clone(),
+        migrations_dirs: cfg.migrations.dirs.clone(),
+        migrations_command: cfg.migrations.command.clone(),
+        seed: cfg.migrations.seed.clone(),
+        main_branch: cfg.git.main_branch.clone(),
+    };
 
     Ok(ProjectDetail {
         warnings: world
@@ -335,6 +428,7 @@ pub fn project_detail(root: &str) -> Result<ProjectDetail> {
         git_branches,
         db_branches,
         services,
+        structure,
     })
 }
 

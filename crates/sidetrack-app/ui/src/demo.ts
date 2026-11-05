@@ -1,7 +1,7 @@
 // Demo data for running the UI in a plain browser (`npm run dev`), where there is
 // no Rust side. It is synthetic, and the app labels it "Demo data" on screen.
 
-import type { AddPreview, Commit, DbBranchView, Op, Overview, Plan, ProjectDetail, Report, Step } from "./types";
+import type { AddPreview, Commit, DbBranchView, Op, Overview, Plan, ProjectDetail, Report, ServiceView, Step, StructureView } from "./types";
 import { visibleSteps } from "./steps";
 import { bytes } from "./format";
 
@@ -151,6 +151,20 @@ function db(
   };
 }
 
+function svc(name: string, extra: Partial<ServiceView>): ServiceView {
+  return { name, database: false, routed: false, running: null, image: null, build: null, depends_on: [], volumes: [], ...extra };
+}
+
+function structure(extra: Partial<StructureView>): StructureView {
+  return {
+    compose_project: null, compose_files: [], engine: "postgres", db_service: "db", db_user: "app",
+    routing_mode: "env", routing_file: ".env.local", routing_variable: "DATABASE_URL", listen: null, restart: [],
+    migrations_tool: "alembic", migrations_dirs: ["alembic/versions"], migrations_command: "docker compose run --rm api alembic upgrade head",
+    seed: null, main_branch: "main",
+    ...extra,
+  };
+}
+
 function shopApi(): ProjectDetail {
   return {
     root: "/home/dev/code/shop-api", path: "~/code/shop-api", name: "shop-api", mode: "env",
@@ -158,10 +172,12 @@ function shopApi(): ProjectDetail {
     warnings: ["merged_search_db is in the registry but not on the server (removed outside sidetrack?)"],
     disk,
     services: [
-      { name: "db", database: true, running: true },
-      { name: "api", database: false, running: true },
-      { name: "worker", database: false, running: false },
+      svc("db", { database: true, running: true, image: "postgres:16-alpine", volumes: [{ kind: "volume", source: "pgdata", target: "/var/lib/postgresql/data" }] }),
+      svc("api", { routed: true, running: true, build: "~/code/shop-api", depends_on: ["db", "redis"], volumes: [{ kind: "bind", source: "~/code/shop-api", target: "/app" }] }),
+      svc("worker", { routed: true, running: false, build: "~/code/shop-api", depends_on: ["db", "redis"] }),
+      svc("redis", { running: true, image: "redis:7-alpine", volumes: [{ kind: "volume", source: "redis-data", target: "/data" }] }),
     ],
+    structure: structure({ compose_project: "shop-api", restart: ["api", "worker"], migrations_dirs: ["migrations/versions"] }),
     git_branches: [
       { name: "feature/refunds", db: "feature_refunds_db", here: true, worktree: null,
         commits: commits("4f1c9e2", ["Add refunds table and model", "Refund endpoint returns 202 while it settles", "Drop payments.captured in favour of captured_at", "Wire refunds into the admin list"], 2) },
@@ -204,7 +220,11 @@ function billing(): ProjectDetail {
   return {
     root: "/home/dev/code/billing", path: "~/code/billing", name: "billing", mode: "proxy",
     git_branch: "fix/invoice-rounding", active_db: "app_dev", problem: null, warnings: [], disk,
-    services: [{ name: "db", database: true, running: true }, { name: "app", database: false, running: true }],
+    services: [
+      svc("db", { database: true, running: true, image: "postgres:17", volumes: [{ kind: "volume", source: "billing_pg", target: "/var/lib/postgresql/data" }] }),
+      svc("app", { routed: true, running: true, build: "~/code/billing", depends_on: ["db"] }),
+    ],
+    structure: structure({ compose_project: "billing", routing_mode: "proxy", listen: "127.0.0.1:6543", restart: ["app"], migrations_tool: "django", migrations_dirs: ["invoices/migrations"], migrations_command: "python manage.py migrate" }),
     git_branches: [
       { name: "fix/invoice-rounding", db: null, here: true, worktree: null, commits: commits("7c21aa0", ["Add rounding_mode to invoices", "Round half to even on totals"], 1) },
       { name: "feature/tax-rates", db: "feature_tax_rates_db", here: false, worktree: null, commits: commits("d4e5f60", ["Tax rates per region", "Seed default tax rates"], 30) },
@@ -225,7 +245,11 @@ function analyticsEtl(): ProjectDetail {
     git_branch: "main", active_db: "app_dev",
     problem: "the db service isn't running; start it with `docker compose up -d db`",
     warnings: [], disk: null,
-    services: [{ name: "db", database: true, running: false }, { name: "etl", database: false, running: false }],
+    services: [
+      svc("db", { database: true, running: false, image: "postgres:16" }),
+      svc("etl", { routed: true, running: false, build: "~/code/analytics-etl", depends_on: ["db"] }),
+    ],
+    structure: structure({ compose_project: null, restart: ["etl"] }),
     git_branches: [
       { name: "main", db: "app_dev", here: true, worktree: null, commits: commits("5e6f7a8", ["Nightly rollup of page views", "Pin pandas"], 48) },
       { name: "feature/backfill-2025", db: "feature_backfill_2025_db", here: false, worktree: null, commits: commits("0b1c2d3", ["Backfill 2025 events"], 100) },
@@ -241,7 +265,11 @@ function authService(): ProjectDetail {
   return {
     root: "/home/dev/code/auth-service", path: "~/code/auth-service", name: "auth-service", mode: "proxy",
     git_branch: "main", active_db: "app_dev", problem: null, warnings: [], disk,
-    services: [{ name: "db", database: true, running: true }, { name: "auth", database: false, running: true }],
+    services: [
+      svc("db", { database: true, running: true, image: "postgres:16-alpine" }),
+      svc("auth", { routed: true, running: true, image: "ghcr.io/acme/auth:dev", depends_on: ["db"] }),
+    ],
+    structure: structure({ compose_project: "auth-service", routing_mode: "proxy", listen: "127.0.0.1:6544", restart: ["auth"] }),
     git_branches: [
       { name: "main", db: "app_dev", here: true, worktree: null, commits: commits("8f9e0d1", ["Rotate signing keys monthly", "Session cookie SameSite=Lax"], 4) },
       { name: "feature/sso", db: "feature_sso_db", here: false, worktree: "~/code/auth-sso", commits: commits("3c4d5e6", ["SAML metadata endpoint", "sso_connections table"], 3) },

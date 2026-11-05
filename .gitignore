@@ -9,3 +9,4 @@
 /.impeccable/questions/roll.json
 /.impeccable/mocks/decision/*
 !/.impeccable/mocks/decision/r2-pick.html
+!/.impeccable/mocks/decision/canvas-d.html

@@ -4,11 +4,13 @@ import { inApp, loadOverview, onCheckout, pickFolder } from "./api";
 import { gb, plural } from "./format";
 import { Proof } from "./Proof";
 import { ProjectList } from "./ProjectList";
+import { ProjectCanvas, SECTIONS, type Section } from "./ProjectCanvas";
 import { ProjectPage } from "./ProjectPage";
 import { EmptySheet, InSyncSheet, LoadErrorSheet, ProblemSheet, Sheet } from "./Sheets";
 import { createsDatabase, pendingOnly, target } from "./steps";
+import { LookContext } from "./look";
 import { Units } from "./text";
-import { applyTheme, loadCollapsed, loadTheme, saveCollapsed, type Theme } from "./theme";
+import { applyLook, applyTheme, loadCollapsed, loadLook, loadTheme, saveCollapsed, type Look, type Theme } from "./theme";
 import type { Overview, Plan, ProjectView } from "./types";
 
 type View = "projects" | "settings";
@@ -31,6 +33,13 @@ export function App() {
   const [adding, setAdding] = useState<string | null>(null);
   // The column folded down to a rail with only its toggle.
   const [collapsed, setCollapsed] = useState(loadCollapsed);
+  const [look, setLook] = useState<Look>(loadLook);
+  // Canvas look: which part of the selected project the pane shows.
+  const [section, setSection] = useState<Section | "overview">("overview");
+  // Canvas look: a plan from a project canvas is applying, so don't navigate away.
+  const [canvasBusy, setCanvasBusy] = useState(false);
+  const canvasBusyRef = useRef(canvasBusy);
+  canvasBusyRef.current = canvasBusy;
   const busy = useRef(false);
   const pinnedRef = useRef(pinned);
   pinnedRef.current = pinned;
@@ -76,6 +85,8 @@ export function App() {
 
   useEffect(() => saveCollapsed(collapsed), [collapsed]);
 
+  useEffect(() => applyLook(look), [look]);
+
   // Ctrl+B (⌘B on a Mac) folds the column, as in most editors. Not while typing.
   useEffect(() => {
     const onKey = (e: globalThis.KeyboardEvent) => {
@@ -105,10 +116,11 @@ export function App() {
   useEffect(
     () =>
       onCheckout((root) => {
-        if (pinnedRef.current) return;
+        if (pinnedRef.current || canvasBusyRef.current) return;
         if (!openRef.current) {
           setView("projects");
           setSelected(root);
+          setSection("overview");
         }
         refresh();
       }),
@@ -132,23 +144,27 @@ export function App() {
   const project = projects.find((p) => p.root === selected) ?? null;
   const disk = overview?.disk ?? null;
 
+  const toggle = (
+  <button
+    className="col-toggle"
+    aria-controls="column"
+    aria-expanded={!collapsed}
+    aria-label={collapsed ? "Expand the sidebar" : "Collapse the sidebar"}
+    title={`${collapsed ? "Expand" : "Collapse"} the sidebar (${shortcut})`}
+    onClick={() => setCollapsed((c) => !c)}
+  >
+    <svg viewBox="0 0 20 20" aria-hidden="true">
+      <rect x="2.5" y="3.5" width="15" height="13" />
+      <line x1="7.5" y1="3.5" x2="7.5" y2="16.5" />
+      {collapsed ? <polyline points="10.5,7.5 13,10 10.5,12.5" /> : <polyline points="13,7.5 10.5,10 13,12.5" />}
+    </svg>
+  </button>
+  );
+
   const top = (
     <>
       <div className="top">
-        <button
-          className="col-toggle"
-          aria-controls="column"
-          aria-expanded={!collapsed}
-          aria-label={collapsed ? "Expand the sidebar" : "Collapse the sidebar"}
-          title={`${collapsed ? "Expand" : "Collapse"} the sidebar (${shortcut})`}
-          onClick={() => setCollapsed((c) => !c)}
-        >
-          <svg viewBox="0 0 20 20" aria-hidden="true">
-            <rect x="2.5" y="3.5" width="15" height="13" />
-            <line x1="7.5" y1="3.5" x2="7.5" y2="16.5" />
-            {collapsed ? <polyline points="10.5,7.5 13,10 10.5,12.5" /> : <polyline points="13,7.5 10.5,10 13,12.5" />}
-          </svg>
-        </button>
+        {toggle}
         <span className="mark">sidetrack</span>
         <nav className="nav" aria-label="Main">
           <button aria-current={view === "projects" ? "page" : undefined} onClick={() => setView("projects")}>Projects</button>
@@ -160,6 +176,107 @@ export function App() {
   );
 
   const layout = collapsed ? "collapsed" : undefined;
+
+  if (look === "canvas") {
+    const locked = pinned !== null || canvasBusy;
+    const goto = (root: string, sec: Section | "overview") => {
+      setSelected(root);
+      setSection(sec);
+      setView("projects");
+      setAdding(null);
+    };
+    const here = (root: string) => view === "projects" && !adding && selected === root;
+    return (
+      <LookContext.Provider value="canvas">
+      <div className="app canvas-app" data-col={layout}>
+        <aside className="side" id="column">
+          <div className="side-top">
+            {toggle}
+            <span className="mark">sidetrack</span>
+          </div>
+          {!inApp && <p className="demo">Demo data. Open the sidetrack app to see your projects.</p>}
+          <nav className="side-nav" aria-label="Projects">
+            <p className="side-group">Projects</p>
+            {overview === null && !loadError && <p className="loading">Reading your projects…</p>}
+            <ul>
+              {projects.map((p) => (
+                <li key={p.root}>
+                  <button className="side-item" aria-current={here(p.root) && section === "overview" ? "page" : undefined} disabled={locked} onClick={() => goto(p.root, "overview")} title={p.path}>
+                    <i className={`dot ${p.problem ? "bad" : p.plan ? "warn" : "ok"}`} aria-hidden="true" />
+                    <span className="side-name">{p.name}</span>
+                  </button>
+                  {here(p.root) && (
+                    <ul className="side-sub" aria-label={`Sections of ${p.name}`}>
+                      {SECTIONS.map((sec) => (
+                        <li key={sec.id}>
+                          <button className="side-item" aria-current={section === sec.id ? "page" : undefined} disabled={locked} onClick={() => goto(p.root, sec.id)}>
+                            {sec.label}
+                            {sec.id === "databases" && <span className="count">{p.branches}</span>}
+                          </button>
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                </li>
+              ))}
+            </ul>
+            <button className="side-item add" onClick={startAdd} disabled={locked}>Add project</button>
+          </nav>
+          <div className="side-foot">
+            <button className="side-item" aria-current={view === "settings" ? "page" : undefined} disabled={locked} onClick={() => setView("settings")}>Settings</button>
+            <p className="side-disk" title={disk?.host_limited ? "Docker Desktop's disk can only grow as far as this host drive allows" : undefined}>
+              {disk ? `${gb(disk.free_bytes)} GB free of ${gb(disk.total_bytes)} GB${disk.host_limited ? " on this PC's drive" : ""}` : "Disk space shows once a database is running."}
+            </p>
+          </div>
+        </aside>
+        <main className="canvas-main">
+          {view === "settings" ? (
+            <div className="pane-scroll">
+              <Settings theme={theme} onTheme={setTheme} look={look} onLook={setLook} registry={overview?.registry ?? "…"} />
+            </div>
+          ) : adding ? (
+            <div className="pane-scroll">
+              <AddProject key={adding} dir={adding} onPickAgain={startAdd} onCancel={() => setAdding(null)} onDone={(root) => { setAdding(null); goto(root, "overview"); refresh(); }} />
+            </div>
+          ) : loadError ? (
+            <div className="pane-scroll"><LoadErrorSheet message={loadError} /></div>
+          ) : overview && projects.length === 0 ? (
+            <div className="pane-scroll"><EmptySheet registry={overview.registry} onAdd={startAdd} /></div>
+          ) : project && section !== "overview" ? (
+            <ProjectCanvas key={project.root} root={project.root} section={section} planWaiting={Boolean(project.plan)} onSeePlan={() => setSection("overview")} onBusy={setCanvasBusy} />
+          ) : project ? (
+            <div className="pane">
+              <header className="pane-head">
+                <h1>{project.name}</h1>
+                <p className="pane-lead">{lead(project, pinned?.root === project.root)}</p>
+                <div className="pane-tools">
+                  <span className="where">{where(project)}</span>
+                  <button className="btn" onClick={refresh} disabled={loading || pinned !== null}>{loading ? "Reading…" : "Refresh"}</button>
+                </div>
+              </header>
+              <div className="pane-body">
+                <div className="pane-scroll">
+                  <ProjectSheet
+                    p={project}
+                    pinned={pinned?.root === project.root ? pinned.plan : null}
+                    setAside={setAside.has(project.root)}
+                    disk={disk}
+                    onStart={(plan) => setPinned({ root: project.root, plan })}
+                    onClose={(applied) => {
+                      setPinned(null);
+                      if (applied) refresh();
+                      else setSetAside((s) => new Set(s).add(project.root));
+                    }}
+                  />
+                </div>
+              </div>
+            </div>
+          ) : null}
+        </main>
+      </div>
+      </LookContext.Provider>
+    );
+  }
 
   if (open && view === "projects") {
     return (
@@ -192,7 +309,7 @@ export function App() {
           {disk ? (
             <>
               <p className="n">{gb(disk.free_bytes)}<small>GB free</small></p>
-              <p className="of">of {gb(disk.total_bytes)} GB on the Docker host</p>
+              <p className="of">of {gb(disk.total_bytes)} GB {disk.host_limited ? "on the drive Docker Desktop keeps its disk on" : "on the Docker host"}</p>
               <div className="meter" role="img" aria-label={`${Math.round((1 - disk.free_bytes / disk.total_bytes) * 100)}% used`}>
                 <i style={{ width: `${(1 - disk.free_bytes / disk.total_bytes) * 100}%` }} />
               </div>
@@ -205,7 +322,7 @@ export function App() {
 
       <main className="main">
         {view === "settings" ? (
-          <Settings theme={theme} onTheme={setTheme} registry={overview?.registry ?? "…"} />
+          <Settings theme={theme} onTheme={setTheme} look={look} onLook={setLook} registry={overview?.registry ?? "…"} />
         ) : adding ? (
           <>
             <div className="lead">
@@ -321,7 +438,11 @@ function where(p: ProjectView): ReactNode {
   return <Units items={parts} />;
 }
 
-function Settings({ theme, onTheme, registry }: { theme: Theme; onTheme: (t: Theme) => void; registry: string }) {
+function Settings({ theme, onTheme, look, onLook, registry }: { theme: Theme; onTheme: (t: Theme) => void; look: Look; onLook: (l: Look) => void; registry: string }) {
+  const looks: { value: Look; label: string; hint: string }[] = [
+    { value: "proof", label: "Press Proof", hint: "Big type; every plan as a proof to sign off." },
+    { value: "canvas", label: "Canvas", hint: "Plain type; each project's branches, databases, containers and structure as node canvases." },
+  ];
   const options: { value: Theme; label: string; hint: string }[] = [
     { value: "system", label: "Match the system", hint: "Light or dark, following your OS." },
     { value: "light", label: "Light", hint: "Paper on the light table." },
@@ -329,6 +450,18 @@ function Settings({ theme, onTheme, registry }: { theme: Theme; onTheme: (t: The
   ];
   return (
     <Sheet label="Settings" title="Settings">
+      <fieldset className="themes">
+        <legend>Look</legend>
+        {looks.map((o) => (
+          <label key={o.value} className="theme-option">
+            <input type="radio" name="look" value={o.value} checked={look === o.value} onChange={() => onLook(o.value)} />
+            <span>
+              <span className="theme-name">{o.label}</span>
+              <span className="theme-hint">{o.hint}</span>
+            </span>
+          </label>
+        ))}
+      </fieldset>
       <fieldset className="themes">
         <legend>Theme</legend>
         {options.map((o) => (
