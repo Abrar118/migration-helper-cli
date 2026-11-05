@@ -41,7 +41,7 @@ sidetrack init
 
 `init` reads your compose setup and shows what it found. That's the database service and user, the env file and variable that hold the DB name, the migration tool, and the container it runs in. It then writes `sidetrack.toml` (safe to commit, no secrets), links the current branch to the current database, and offers to install the git hook.
 
-For a non-default Compose file, use `sidetrack init -f docker-compose-dev.yml` (repeat `-f` for overrides, in order). The selected files are saved in `[compose].files` and included in detected Compose migration commands.
+For a non-default Compose file, use `sidetrack init -f docker-compose-dev.yml` (repeat `-f` for overrides, in order). Relative CLI paths use your current directory, or the directory selected with `-C`. The selected files are saved in `[compose].files` and included in detected Compose migration commands.
 
 After that, just use git. When you check out a branch, the hook shows a plan and asks before doing anything. Without a terminal (VS Code, other git GUIs) it prints a one-line hint instead of prompting:
 
@@ -127,7 +127,7 @@ Instead of rewriting an env file and recreating the app, point the app at a loca
 [routing]
 mode = "proxy"
 database = "app_dev"          # the name your app connects to
-listen = "0.0.0.0:54320"      # default 127.0.0.1:54320
+listen = "127.0.0.1:54320"    # default; init selects 0.0.0.0 for containers on Linux
 restart = ["api"]             # stopped only while its database is being copied
 # upstream = "127.0.0.1:5432" # default: the port compose publishes for the db service
 # file = ".env"               # optional: git worktrees set their proxy port in this URL
@@ -150,7 +150,8 @@ services:
 - **No restarts, even for copies:** while the proxy is running, copying the database the app is using doesn't stop the app. The proxy holds the app's new connections for the few seconds the copy takes, then lets them through to the new database. A switch then only changes where `app_dev` goes. The proxy closes the app's open connections to the old database, so its connection pool reconnects to the new one.
 - **Other databases:** connections to any other name pass through unchanged.
 - **Encryption:** the proxy accepts TLS, so `sslmode=prefer` (the default) and `require` both work. It uses a self-signed certificate that sidetrack creates once per machine, next to its registry (`proxy-tls.pem`, e.g. `~/.local/share/sidetrack/` on Linux). For `verify-full`, point `sslrootcert` at that file; it is valid for `localhost`, `127.0.0.1` and `host.docker.internal`. The proxy talks to Postgres without TLS.
-- **Linux:** when the app runs in a container, listen on `0.0.0.0` (or the Docker bridge address), not `127.0.0.1`.
+- **Listener and network access:** generated proxy setups use loopback on macOS and Windows. Linux setups with app containers select `0.0.0.0:54320` (a specific Docker bridge address can be configured instead). A non-loopback listener may accept connections from other machines on your network. Sidetrack adds no authentication; Postgres authentication and your firewall control access. `init` and Add project warn when the listener is not loopback.
+- **Container access:** `host.docker.internal` reaching host loopback was verified on macOS with OrbStack; Docker Desktop on macOS/Windows has not been tested here. If your runtime cannot reach loopback, configure a reachable address in `routing.listen` and restart the proxy. On native Linux, containers also need `host.docker.internal:host-gateway` in `extra_hosts`.
 
 ### Git worktrees
 
@@ -177,7 +178,7 @@ Detected migration tools: Alembic, Django, Prisma, Rails, Flyway and Knex. Anyth
 
 **Add project** (in the column, or on the empty screen) adds a repository from the app: pick its folder and the app shows what `sidetrack init` would set up. That's the database, the variable it rewrites, the migration tool and the `sidetrack.toml` it writes. It can start the database if it isn't running, and can install the git hook.
 
-Add project also offers **Choose Compose file** and **Use proxy routing**, including when the default setup can't be read. Proxy setup shows the host, port and database to configure in your app; preserve any JDBC prefix, credentials and URL options. Add the project to save its setup and start the proxy, then update the app connection and recreate its containers. The database must publish a port for the proxy, or have `routing.upstream` configured. Existing `sidetrack.toml` settings take precedence.
+Add project also offers **Choose Compose file**, **Add override file** (with merge-order controls), and **Use proxy routing**, including when the default setup can't be read. Proxy setup shows the host, port and database to configure in your app; preserve any JDBC prefix, credentials and URL options. Add the project to save its setup and start the proxy, then update the app connection and recreate its containers. The database must publish a port for the proxy, or have `routing.upstream` configured. Existing `sidetrack.toml` settings take precedence.
 
 The column on the left folds away with the button before the wordmark, or Ctrl+B (⌘B on a Mac), to give the plan the whole window.
 

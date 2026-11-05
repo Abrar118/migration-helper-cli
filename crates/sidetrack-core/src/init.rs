@@ -153,10 +153,10 @@ impl Setup {
     }
 
     pub fn proxy_upstream(&self) -> Result<Option<String>> {
-        match &self.cfg.routing.upstream {
-            Some(upstream) => Ok(Some(upstream.clone())),
-            None => self.db_compose().port(&self.cfg.database.service, 5432),
-        }
+        self.db_compose().proxy_upstream(
+            &self.cfg.database.service,
+            self.cfg.routing.upstream.as_deref(),
+        )
     }
 
     /// `docker compose up -d <database service>`.

@@ -696,7 +696,7 @@ impl Detection {
         };
         if proxy {
             cfg.routing.use_proxy(&self.active_db);
-            if !cfg.routing.restart.is_empty() {
+            if cfg!(target_os = "linux") && !cfg.routing.restart.is_empty() {
                 cfg.routing.listen = Some("0.0.0.0:54320".into());
             }
         }
@@ -943,9 +943,46 @@ mod tests {
         cfg.validate().unwrap();
         assert_eq!(cfg.compose.files, files);
         assert_eq!(cfg.routing.database.as_deref(), Some("shop"));
-        assert_eq!(cfg.routing.listen.as_deref(), Some("0.0.0.0:54320"));
+        assert_eq!(
+            cfg.routing.listen.as_deref(),
+            if cfg!(target_os = "linux") {
+                Some("0.0.0.0:54320")
+            } else {
+                None
+            }
+        );
         assert_eq!(cfg.routing.restart, ["web"]);
         assert_eq!(cfg.migrations.command, "docker compose -f 'compose dev.yml' -f 'team'\\''s override.yml' exec -T web ./migrate.sh");
+    }
+
+    #[test]
+    fn selecting_compose_files_preserves_non_compose_migration_commands() {
+        let dir = tempfile::tempdir().unwrap();
+        write(dir.path(), "migrations/001.sql", "");
+        let m = model(
+            r#"{"services":{"db":{"image":"postgres"},"api":{"depends_on":["db"],"environment":{"DATABASE_URL":"postgresql://db/postgres"}}}}"#,
+        );
+        let mut d = detect(
+            dir.path(),
+            dir.path(),
+            &ComposeViews {
+                resolved: m.clone(),
+                env_files: m.clone(),
+                raw: m,
+            },
+        )
+        .unwrap();
+        for command in [
+            "./migrate.sh",
+            "docker run --rm migrator",
+            "docker-compose exec api migrate",
+            "sh -c 'docker compose exec api migrate'",
+        ] {
+            d.migrations.command = Some(command.into());
+            let cfg = d.to_config(None, true, vec!["dev.yml".into()]).unwrap();
+            assert_eq!(cfg.migrations.command, command);
+            assert_eq!(cfg.compose.files, ["dev.yml"]);
+        }
     }
 
     #[test]

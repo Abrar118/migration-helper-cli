@@ -302,12 +302,22 @@ fn init(
     proxy: bool,
     compose_files: Vec<String>,
 ) -> Result<bool> {
+    let command_dir = std::env::current_dir()?.join(dir);
+    let compose_files = compose_files
+        .into_iter()
+        .map(|file| command_dir.join(file).to_string_lossy().into_owned())
+        .collect();
     let setup = Setup::read(dir, main_branch, proxy, compose_files)?;
     match &setup.detected {
-        None => println!(
-            "Using the existing {}.",
-            sidetrack_core::config::CONFIG_FILE
-        ),
+        None => {
+            println!(
+                "Using the existing {}.",
+                sidetrack_core::config::CONFIG_FILE
+            );
+            if let Some(warning) = setup.cfg.routing.network_warning() {
+                println!("Warning: {warning}");
+            }
+        }
         Some(found) => {
             let cfg = &setup.cfg;
             if opts.json {
@@ -332,13 +342,17 @@ fn init(
                 };
                 println!(
                     "Proxy mode: point {url} at the proxy, once: host `host.docker.internal` from containers                      (`localhost` from this machine), port {}, database {}.
-                     On Linux, containers also need `extra_hosts: [\"host.docker.internal:host-gateway\"]`                      and the proxy must listen on 0.0.0.0 (routing.listen).",
-                    sidetrack_core::config::DEFAULT_PROXY_LISTEN
+                     The configured listener is {}. On Linux, containers also need `extra_hosts: [\"host.docker.internal:host-gateway\"]`.",
+                    cfg.routing.listen_addr()
                         .rsplit(':')
                         .next()
                         .unwrap_or_default(),
                     found.active_db,
+                    cfg.routing.listen_addr(),
                 );
+                if let Some(warning) = cfg.routing.network_warning() {
+                    println!("Warning: {warning}");
+                }
                 if cfg.routing.file.is_empty() {
                     println!(
                         "Git worktrees can't get their own database with the URL in the compose file.                          For that, move it to an untracked .env file and set routing.file and routing.variable."

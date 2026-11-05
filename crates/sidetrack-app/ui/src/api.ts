@@ -76,10 +76,10 @@ export async function pickFolder(): Promise<string | null> {
 }
 
 /** What adding the repo at (or above) `dir` would do. Changes nothing. */
-export async function pickComposeFiles(dir: string): Promise<string[] | null> {
-  if (!inApp) return ["docker-compose-dev.yml"];
+export async function pickComposeFiles(dir: string, override = false): Promise<string[] | null> {
+  if (!inApp) return [override ? "docker-compose.override.yml" : "docker-compose-dev.yml"];
   const { open } = await import("@tauri-apps/plugin-dialog");
-  const file = await open({ defaultPath: dir, title: "Choose a Compose file", filters: [{ name: "Compose", extensions: ["yml", "yaml"] }] });
+  const file = await open({ defaultPath: dir, title: override ? "Add a Compose override" : "Choose a Compose file", filters: [{ name: "Compose", extensions: ["yml", "yaml"] }] });
   return typeof file === "string" ? [file] : null;
 }
 

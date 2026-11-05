@@ -282,6 +282,7 @@ The sheet holds the DB branch tree: nodes with the Courier name at about 20px, s
 ### Actions and inline fields
 
 Add project keeps Compose-file selection and proxy routing on the proof, including on an unreadable setup. Proxy setup names the connection destination and explains the one-time connection change; save the setup and start the proxy before changing the app connection and recreating its containers. Existing `sidetrack.toml` settings are shown without setup overrides.
+
 Actions sit under the selected DB node, on paper, as 16px underlined text buttons in a row ("Snapshot", "Reset to app_dev", "Rename", "Delete"), closed by a 1px key rule; a soft 15px sentence says why an action is missing ("The app uses it, so it can't be deleted"). An action that needs input opens a small field in place, never a dialog: a 15px semibold soft label over a 46px square input with a 2px key border (Courier for branch names), then a secondary "Show the plan" and a "Cancel" text button. In the column, a git branch with no database gets the same field with a select ("Create its database from"). The planner's refusals appear under the field as a Query. Choosing an action replaces the tree with its proof; Escape steps back one level (proof, field, project).
 
 ### Proof sheet with crop marks

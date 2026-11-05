@@ -247,4 +247,5 @@ export interface AddPreview {
   database_running: boolean;
   hook_installed: boolean;
   proxy_upstream: string | null;
+  warnings: string[];
 }

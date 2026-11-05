@@ -66,11 +66,26 @@ export function AddProject({ dir, onPickAgain, onCancel, onDone }: {
   const choices = (
     <div className="add-setup">
       <p className="note">Compose files: <Db>{files.length ? files.join(" → ") : "Docker Compose defaults"}</Db></p>
+      {!existing && composeFiles.length > 0 && <ol aria-label="Compose files in merge order">
+        {composeFiles.map((file, index) => <li key={`${index}:${file}`}>
+          <Db>{file}</Db>{" "}
+          <button className="text-button" disabled={busy || index === 0} aria-label={`Move ${file} earlier`} onClick={() => setComposeFiles(files => {
+            const next = [...files];
+            [next[index - 1], next[index]] = [next[index], next[index - 1]];
+            return next;
+          })}>Move earlier</button>{" "}
+          <button className="text-button" disabled={busy} aria-label={`Remove ${file}`} onClick={() => setComposeFiles(files => files.filter((_, i) => i !== index))}>Remove</button>
+        </li>)}
+      </ol>}
       {!existing && <div className="row">
         <button className="secondary" disabled={busy} onClick={async () => {
           try { const picked = await pickComposeFiles(dir); if (picked?.length) setComposeFiles(picked); }
           catch (e) { setPhase({ at: "unreadable", message: message(e) }); }
         }}>Choose Compose file</button>
+        {composeFiles.length > 0 && <button className="secondary" disabled={busy} onClick={async () => {
+          try { const picked = await pickComposeFiles(dir, true); if (picked?.length) setComposeFiles(files => [...files, ...picked]); }
+          catch (e) { setPhase({ at: "unreadable", message: message(e) }); }
+        }}>Add override file</button>}
         {composeFiles.length > 0 && <button className="text-button" disabled={busy} onClick={() => setComposeFiles([])}>Use default files</button>}
       </div>}
       {!existing && <label className="confirm key">
@@ -136,11 +151,14 @@ export function AddProject({ dir, onPickAgain, onCancel, onDone }: {
 
   const queries = [
     ...(d?.notes ?? []),
+    ...p.warnings,
     ...(p.registered ? ["it's already added; adding it again only links what's new"] : []),
     ...(p.database_running ? [] : [`the database (${c.database.service}) isn't running, so sidetrack can't check what's in it yet`]),
     ...(c.routing.mode === "proxy" && p.database_running && !p.proxy_upstream ? ["the database must publish port 5432 for the proxy; publish a local port in Compose or set routing.upstream in sidetrack.toml"] : []),
   ];
   const proxy = c.routing.mode === "proxy";
+  const listen = c.routing.listen ?? "127.0.0.1:54320";
+  const proxyPort = listen.slice(listen.lastIndexOf(":") + 1);
 
   return (
     <section className="sheet add-sheet" aria-label={`Add ${p.name}`}>
@@ -153,8 +171,8 @@ export function AddProject({ dir, onPickAgain, onCancel, onDone }: {
         <Queries warnings={queries} />
         {proxy && d && phase.at !== "added" && <div className="add-setup">
           <h3>Connect your app to the proxy</h3>
-          <p>After adding, point {d.inline.length ? d.inline.map((item) => `${item.variable} in ${item.service}`).join(", ") : "your app's database connection"} at <Db>host.docker.internal:54320</Db> from containers, or <Db>127.0.0.1:54320</Db> from this machine. Keep the database name <Db>{c.routing.database}</Db>, credentials, JDBC prefix and URL options.</p>
-          <p className="note">Add the project first to save these settings and start its proxy, then update the app connection and recreate its containers. The proxy listens on <Db>{c.routing.listen ?? "127.0.0.1:54320"}</Db>. On Linux, containers also need <Db>host.docker.internal:host-gateway</Db> in extra_hosts.</p>
+          <p>After adding, point {d.inline.length ? d.inline.map((item) => `${item.variable} in ${item.service}`).join(", ") : "your app's database connection"} at <Db>host.docker.internal:{proxyPort}</Db> from containers, or <Db>127.0.0.1:{proxyPort}</Db> from this machine. Keep the database name <Db>{c.routing.database}</Db>, credentials, JDBC prefix and URL options.</p>
+          <p className="note">Add the project first to save these settings and start its proxy, then update the app connection and recreate its containers. The proxy listens on <Db>{listen}</Db>. On Linux, containers also need <Db>host.docker.internal:host-gateway</Db> in extra_hosts.</p>
           <label className="confirm key"><input type="checkbox" checked={proxyReady} disabled={busy} onChange={(e) => setProxyReady(e.target.checked)} /><span>I will update the app connection after adding.</span></label>
           <button className="secondary" disabled={busy} onClick={read}>Review setup again</button>
         </div>}

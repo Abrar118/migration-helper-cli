@@ -97,6 +97,21 @@ impl Compose {
         )
     }
 
+    pub fn proxy_upstream(
+        &self,
+        service: &str,
+        configured: Option<&str>,
+    ) -> Result<Option<String>> {
+        match configured {
+            Some(address) => Ok(Some(address.to_string())),
+            None => Ok(self.port(service, 5432)?.map(|address| {
+                address
+                    .replace("0.0.0.0", "127.0.0.1")
+                    .replace("[::]", "127.0.0.1")
+            })),
+        }
+    }
+
     pub fn stop(&self, services: &[String]) -> Result<()> {
         if services.is_empty() {
             return Ok(());
@@ -252,6 +267,18 @@ impl Service {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn explicit_proxy_upstream_does_not_require_compose() {
+        let compose = Compose::new("/nonexistent-sidetrack-project", vec![]);
+        assert_eq!(
+            compose
+                .proxy_upstream("db", Some("127.0.0.1:15432"))
+                .unwrap()
+                .as_deref(),
+            Some("127.0.0.1:15432")
+        );
+    }
 
     const JSON: &str = r#"{
       "name": "shop",
