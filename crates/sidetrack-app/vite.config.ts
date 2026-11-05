@@ -7,5 +7,9 @@ export default defineConfig({
   plugins: [react()],
   clearScreen: false,
   server: { port: 5173, strictPort: true },
+  // These are imported lazily (only inside the app window), so Vite would find
+  // them on first use, re-bundle and reload the page mid-action (the first
+  // "Add project" click). Bundle them up front instead.
+  optimizeDeps: { include: ["@tauri-apps/api/core", "@tauri-apps/api/event", "@tauri-apps/plugin-dialog"] },
   build: { outDir: "../dist", emptyOutDir: true, target: "es2022" },
 });
