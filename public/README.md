@@ -22,3 +22,16 @@ All images are 3840×2160: a 1920×1080 window at 2× pixel density.
 | `screenshots/14-settings-dark.png` | Settings: theme, the step-colour key, the registry. |
 | `screenshots/15-applying.png` | A plan applying: the colour bar fills as each step finishes. |
 | `screenshots/16-applied.png` | Applied, with each step's time and the sign-off. |
+
+## The two looks
+
+The app has two looks, picked in Settings → Look: **Press Proof** (the files above) and **Canvas** (plain type, node canvases). These are 1440×900 at 1× pixel density.
+
+| Folder | What it shows |
+|---|---|
+| `screenshots/canvas/real/`, `screenshots/canvas/real-dark/` | Canvas look in the real app against the same three demo repos: each project's Overview (its plan, explained), Branches, Databases, Containers and Structure canvases. Taken before the disk-space fix, so the sidebar shows Docker Desktop's ~1 TB virtual disk instead of the host drive. |
+| `screenshots/canvas/light/`, `screenshots/canvas/dark/` | Canvas look on the browser demo data (`npm run dev`), including a database selected with its action card. |
+| `screenshots/press-proof/light/`, `screenshots/press-proof/dark/` | Press Proof on the browser demo data, after the Canvas look was added: All projects, the project view, Settings. |
+| `screenshots/press-proof/earlier/` | Older Press Proof working captures of the browser demo (applying, applied, in sync, a problem, narrow windows). |
+
+Retake them with `crates/sidetrack-app/scripts/screenshots.mjs` (see the comment at its top).
