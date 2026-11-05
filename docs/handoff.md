@@ -28,7 +28,7 @@ Last updated 2026-11-05. Read `CLAUDE.md` first, then this.
 | Handoff update after PRs #19–#21 | merged (PR #22) |
 | Approvals from the git hook: with no TTY, the hook tells the open app, which shows the switch proof | merged (PR #23) |
 | Handoff update after PR #23 | merged (PR #24) |
-| **Desktop app: reset to any snapshot, delete a snapshot, proxy-start problems on the proof** | **open as PR #25** |
+| Desktop app: reset to any snapshot, delete a snapshot, proxy-start problems on the proof | merged (PR #25) |
 
 `main` is protected. Every PR needs one approval, including a code-owner review (`@Abrar118`). The owner can bypass the rules. Force-pushes and deletion are blocked.
 
@@ -36,7 +36,7 @@ After every PR merge, update this file: the State table, the follow-ups, and the
 
 Stacked PRs: merge the bottom one into `main` first, then retarget the next one to `main` before merging it. Merging an upper PR into its stacked base after that base has merged strands its commits (that's what happened to #18).
 
-Stale remote branches were deleted on 2026-11-04. Since then, the merged branches `docs/handoff-after-pr10`, `feat/desktop-app`, `docs/handoff-after-pr12`, `feat/app-proxy-autostart`, `docs/handoff-after-pr14`, `feat/app-project-view`, `feat/app-plans`, `docs/handoff-after-pr17`, `feat/app-sheet-proofs`, `feat/proxy-tls`, `docs/handoff-after-pr21` and `feat/hook-app-approvals` are back on the remote. The owner will clean them up later.
+Stale remote branches were deleted on 2026-11-04. Since then, the merged branches `docs/handoff-after-pr10`, `feat/desktop-app`, `docs/handoff-after-pr12`, `feat/app-proxy-autostart`, `docs/handoff-after-pr14`, `feat/app-project-view`, `feat/app-plans`, `docs/handoff-after-pr17`, `feat/app-sheet-proofs`, `feat/proxy-tls`, `docs/handoff-after-pr21`, `feat/hook-app-approvals`, `docs/handoff-after-pr23` and `feat/app-op-gaps` are back on the remote. The owner will clean them up later.
 
 ## Getting going on a new machine
 
