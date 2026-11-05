@@ -8,6 +8,7 @@ use std::path::Path;
 use anyhow::{bail, Result};
 use sidetrack_core::config::Config;
 use sidetrack_core::git::Git;
+use sidetrack_core::notify;
 use sidetrack_core::workspace::Workspace;
 
 use crate::ui::{self, Opts};
@@ -135,10 +136,15 @@ fn run_inner(dir: &Path, flag: &str) -> Result<()> {
     }
     let auto = project.auto_approve && !plan.has_destructive();
     if !auto && !ui::has_tty() {
-        eprintln!(
-            "sidetrack: {} — run `sidetrack switch` to apply",
-            plan.summary
-        );
+        // A GUI client: hand it to the desktop app if it's open. The app only
+        // plans for each project's main worktree.
+        let in_app = !ws.is_linked_worktree() && notify::send(&ws.root_key());
+        let next = if in_app {
+            "approve it in the sidetrack app, or run `sidetrack switch`"
+        } else {
+            "run `sidetrack switch` to apply"
+        };
+        eprintln!("sidetrack: {} — {next}", plan.summary);
         return Ok(());
     }
     let mut plan = plan;

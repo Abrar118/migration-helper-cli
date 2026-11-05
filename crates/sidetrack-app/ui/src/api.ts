@@ -46,3 +46,20 @@ export async function applyOp(
     stop();
   }
 }
+
+/**
+ * Call `cb` with a project's root whenever the git hook reports a checkout that
+ * needs a switch (a GUI client, so no terminal to ask in). Returns the unsubscribe.
+ */
+export function onCheckout(cb: (root: string) => void): () => void {
+  if (!inApp) return () => {};
+  let stop: (() => void) | null = null;
+  let done = false;
+  import("@tauri-apps/api/event")
+    .then(({ listen }) => listen<string>("checkout", (e) => cb(e.payload)))
+    .then((s) => (done ? s() : (stop = s)));
+  return () => {
+    done = true;
+    stop?.();
+  };
+}
