@@ -138,7 +138,9 @@ code, .nw { white-space: nowrap; }
 }
 .row-button:hover { background: var(--table); }
 .row-button .name { display: block; font-size: 24px; font-weight: 600; letter-spacing: -0.015em; line-height: 1.15; margin-bottom: 5px; overflow-wrap: anywhere; }
-.row-button .state { display: block; font-size: 15px; color: var(--soft); }
+.row-button .state { display: block; font-size: 15px; color: var(--soft); overflow-wrap: anywhere; }
+/* A long error never runs past the column: three lines, the rest in the tooltip and on the sheet. */
+.row-button .state.problem { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 3; overflow: hidden; }
 .row-button .state.problem { color: var(--ink); font-weight: 600; }
 .row-button[aria-current="true"] { background: var(--ink); color: var(--paper); }
 .row-button[aria-current="true"] .state { color: var(--paper); }
@@ -243,6 +245,8 @@ code, .nw { white-space: nowrap; }
 
 .queries { margin-top: 16px; display: grid; gap: 6px; max-width: 75ch; }
 .query { font-size: 15px; }
+/* Commands quoted in errors can be longer than the sheet: let them wrap. */
+.query code { white-space: normal; overflow-wrap: anywhere; }
 .query strong { font-weight: 700; margin-right: 6px; }
 .note { font-size: 15px; color: var(--soft); max-width: 75ch; }
 .queries .note { margin: 0; }
