@@ -140,9 +140,10 @@ code, .nw { white-space: nowrap; }
 
 /* The sentence and the side share a row only when the sentence fits on one
    line beside it; otherwise the side drops below, right-aligned, and the
-   sentence gets the full width, balanced so no name or word is left alone. */
+   sentence gets the full width. Its last name or word is tied to the one
+   before it (in the markup), so it's never left alone on a line. */
 .lead { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: baseline; gap: 6px 24px; margin-bottom: 26px; }
-.lead > p { flex: 1 1 auto; min-width: 0; font-size: 22px; font-weight: 600; letter-spacing: -0.01em; text-wrap: balance; text-wrap: pretty; overflow-wrap: break-word; }
+.lead > p { flex: 1 1 auto; min-width: 0; font-size: 22px; font-weight: 600; letter-spacing: -0.01em; text-wrap: pretty; overflow-wrap: break-word; }
 .lead-side { flex: 0 1 auto; margin-left: auto; display: flex; flex-wrap: wrap; justify-content: flex-end; align-items: baseline; gap: 4px 20px; font-size: 15px; color: var(--soft); text-align: right; }
 .lead-side .text-button { white-space: nowrap; }
 
