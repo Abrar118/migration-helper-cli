@@ -2,6 +2,14 @@
 
 Last updated 2026-11-05. Read `CLAUDE.md` first, then this.
 
+## Compose setup fixes (this PR)
+
+- Compose environment parsing accepts maps and `KEY=value` lists, preserving embedded `=`, empty strings and bare names.
+- Add project offers a Compose file picker and guided proxy routing for inline JDBC URLs. The CLI accepts repeated `init -f` / `--compose-file` flags. Selected files are persisted and used by generated Compose migration commands, Start and Add; both actions recheck the reviewed settings.
+- New container-facing proxies listen on `0.0.0.0:54320`. Add requires a published database port (or explicit upstream) and acknowledgment of the one-time app connection change. Add saves the setup and starts the proxy when autostart is enabled; update the app URL and recreate containers afterward.
+- Razorbill's `docker-compose-dev.yml` passes a read-only proxy setup preview; no Razorbill files or databases were modified. Its generated `flyway migrate` command still needs validation: the app bundles Flyway in Spring Boot, rather than providing a standalone Flyway executable. No real switch was applied there.
+- Verification: 85 workspace tests with a dedicated Postgres container, both Clippy checks, formatting, UI/native builds; browser smoke checks of file selection, proxy confirmation, database start, rereview and Add in Press Proof/light and Canvas/dark. Native file-dialog interaction and real Razorbill Apply remain untested.
+
 ## State
 
 | What | Where |
@@ -34,7 +42,7 @@ Last updated 2026-11-05. Read `CLAUDE.md` first, then this.
 | Desktop app: collapsible column; a plain error when a project's folder is gone | merged (PR #28, through #27's branch) |
 | Showcase screenshots in `public/`; Vite pre-bundles the Tauri modules | merged (PR #29) |
 | Desktop app: a second look, "Canvas" (sidebar of sections, node canvases, drag and drop); host-drive disk space under Docker Desktop | merged (PR #30) |
-| **Handoff update after PR #30** | **open as PR #31** |
+| Handoff update after PR #30 | merged (PR #31) |
 
 `main` is protected. Every PR needs one approval, including a code-owner review (`@Abrar118`). The owner can bypass the rules. Force-pushes and deletion are blocked.
 

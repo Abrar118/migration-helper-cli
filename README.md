@@ -41,6 +41,8 @@ sidetrack init
 
 `init` reads your compose setup and shows what it found. That's the database service and user, the env file and variable that hold the DB name, the migration tool, and the container it runs in. It then writes `sidetrack.toml` (safe to commit, no secrets), links the current branch to the current database, and offers to install the git hook.
 
+For a non-default Compose file, use `sidetrack init -f docker-compose-dev.yml` (repeat `-f` for overrides, in order). The selected files are saved in `[compose].files` and included in detected Compose migration commands.
+
 After that, just use git. When you check out a branch, the hook shows a plan and asks before doing anything. Without a terminal (VS Code, other git GUIs) it prints a one-line hint instead of prompting:
 
 ```text
@@ -173,7 +175,9 @@ Detected migration tools: Alembic, Django, Prisma, Rails, Flyway and Knex. Anyth
 - **Same plan:** before it runs, the plan is built again, and nothing runs if it no longer matches the one on screen.
 - **Destructive plans:** these need an explicit confirmation.
 
-**Add project** (in the column, or on the empty screen) adds a repository from the app: pick its folder and the app shows what `sidetrack init` would set up. That's the database, the variable it rewrites, the migration tool and the `sidetrack.toml` it writes. It can start the database if it isn't running, and can install the git hook. Proxy mode is still set up with `sidetrack init --proxy`.
+**Add project** (in the column, or on the empty screen) adds a repository from the app: pick its folder and the app shows what `sidetrack init` would set up. That's the database, the variable it rewrites, the migration tool and the `sidetrack.toml` it writes. It can start the database if it isn't running, and can install the git hook.
+
+Add project also offers **Choose Compose file** and **Use proxy routing**, including when the default setup can't be read. Proxy setup shows the host, port and database to configure in your app; preserve any JDBC prefix, credentials and URL options. Add the project to save its setup and start the proxy, then update the app connection and recreate its containers. The database must publish a port for the proxy, or have `routing.upstream` configured. Existing `sidetrack.toml` settings take precedence.
 
 The column on the left folds away with the button before the wordmark, or Ctrl+B (⌘B on a Mac), to give the plan the whole window.
 

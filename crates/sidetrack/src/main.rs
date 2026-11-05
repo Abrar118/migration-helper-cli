@@ -62,6 +62,9 @@ enum Command {
         /// Route the app through `sidetrack proxy` instead of rewriting its env file.
         #[arg(long)]
         proxy: bool,
+        /// Compose files to use, in order (repeat for overrides).
+        #[arg(short = 'f', long = "compose-file")]
+        compose_files: Vec<String>,
     },
     /// Show the current branch, the active database and whether they match.
     Status,
@@ -187,7 +190,8 @@ fn dispatch(command: Command, dir: &Path, opts: &Opts) -> Result<bool> {
             main_branch,
             no_hook,
             proxy,
-        } => init(dir, opts, main_branch, no_hook, proxy),
+            compose_files,
+        } => init(dir, opts, main_branch, no_hook, proxy, compose_files),
         Command::Status => status(dir, opts),
         Command::List => list(dir, opts),
         Command::Doctor => doctor(dir, opts),
@@ -296,8 +300,9 @@ fn init(
     main_branch: Option<String>,
     no_hook: bool,
     proxy: bool,
+    compose_files: Vec<String>,
 ) -> Result<bool> {
-    let setup = Setup::read(dir, main_branch, proxy)?;
+    let setup = Setup::read(dir, main_branch, proxy, compose_files)?;
     match &setup.detected {
         None => println!(
             "Using the existing {}.",

@@ -76,17 +76,24 @@ export async function pickFolder(): Promise<string | null> {
 }
 
 /** What adding the repo at (or above) `dir` would do. Changes nothing. */
-export async function previewProject(dir: string): Promise<AddPreview> {
-  if (!inApp) return demoPreview(dir);
+export async function pickComposeFiles(dir: string): Promise<string[] | null> {
+  if (!inApp) return ["docker-compose-dev.yml"];
+  const { open } = await import("@tauri-apps/plugin-dialog");
+  const file = await open({ defaultPath: dir, title: "Choose a Compose file", filters: [{ name: "Compose", extensions: ["yml", "yaml"] }] });
+  return typeof file === "string" ? [file] : null;
+}
+
+export async function previewProject(dir: string, composeFiles: string[] = [], proxy = false): Promise<AddPreview> {
+  if (!inApp) return demoPreview(dir, composeFiles, proxy);
   const { invoke } = await import("@tauri-apps/api/core");
-  return invoke<AddPreview>("preview_project", { dir });
+  return invoke<AddPreview>("preview_project", { dir, composeFiles, proxy });
 }
 
 /** `docker compose up -d <database>` for the repo at `root`. */
-export async function startDatabase(root: string): Promise<void> {
+export async function startDatabase(root: string, shownToml: string): Promise<void> {
   if (!inApp) return demoStartDatabase();
   const { invoke } = await import("@tauri-apps/api/core");
-  return invoke("start_database", { root });
+  return invoke("start_database", { root, shownToml });
 }
 
 /** Add the repo at `root`; refused if its setup no longer reads as `shownToml`. Returns what was done. */

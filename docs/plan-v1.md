@@ -190,7 +190,7 @@ Decisions:
 
 ## Adding projects from the app
 
-"Add project" in the desktop app does what `sidetrack init` does (env mode only; `init --proxy` stays in the CLI). The logic moved to the core so both share it: `init::Setup::read` (detection, or the existing `sidetrack.toml`) and `Setup::register` (write the config, register, adopt, re-link). Installing the git hook moved to `sidetrack_core::hook`.
+"Add project" in the desktop app does what `sidetrack init` does (env or proxy routing, with an optional selected Compose file). The logic moved to the core so both share it: `init::Setup::read` (detection, or the existing `sidetrack.toml`) and `Setup::register` (write the config, register, adopt, re-link). Installing the git hook moved to `sidetrack_core::hook`.
 
 Decisions:
 

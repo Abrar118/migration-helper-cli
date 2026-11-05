@@ -148,7 +148,7 @@ pub struct ComposeModel {
 pub struct Service {
     #[serde(default)]
     pub image: Option<String>,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "deserialize_environment")]
     pub environment: BTreeMap<String, Option<String>>,
     #[serde(default)]
     pub env_file: Vec<EnvFileRef>,
@@ -181,6 +181,31 @@ pub struct Volume {
     pub source: Option<String>,
     #[serde(default)]
     pub target: Option<String>,
+}
+
+fn deserialize_environment<'de, D>(
+    deserializer: D,
+) -> Result<BTreeMap<String, Option<String>>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    #[derive(Deserialize)]
+    #[serde(untagged)]
+    enum Environment {
+        Map(BTreeMap<String, Option<String>>),
+        List(Vec<String>),
+    }
+
+    Ok(match Environment::deserialize(deserializer)? {
+        Environment::Map(map) => map,
+        Environment::List(items) => items
+            .into_iter()
+            .map(|item| match item.split_once('=') {
+                Some((key, value)) => (key.to_string(), Some(value.to_string())),
+                None => (item, None),
+            })
+            .collect(),
+    })
 }
 
 impl ComposeModel {
@@ -242,6 +267,33 @@ mod tests {
         "worker": {"depends_on": ["db"]}
       }
     }"#;
+
+    #[test]
+    fn parses_environment_list_without_losing_values() {
+        let m = ComposeModel::from_json(
+            r#"{"services":{"api":{"environment":[
+            "URL=jdbc:postgresql://db/app?options=a=b", "TOKEN=abc==",
+            "EMPTY=", "UNSET", "DUP=old", "DUP=new"
+        ]}}}"#,
+        )
+        .unwrap();
+        let api = &m.services["api"];
+        assert_eq!(api.env("URL"), Some("jdbc:postgresql://db/app?options=a=b"));
+        assert_eq!(api.env("TOKEN"), Some("abc=="));
+        assert_eq!(api.env("EMPTY"), Some(""));
+        assert_eq!(api.environment.get("UNSET"), Some(&None));
+        assert_eq!(api.env("DUP"), Some("new"));
+    }
+
+    #[test]
+    fn rejects_invalid_environment_values() {
+        for json in [
+            r#"{"services":{"api":{"environment":[1]}}}"#,
+            r#"{"services":{"api":{"environment":{"PORT":5432}}}}"#,
+        ] {
+            assert!(ComposeModel::from_json(json).is_err());
+        }
+    }
 
     #[test]
     fn parses_config_json() {

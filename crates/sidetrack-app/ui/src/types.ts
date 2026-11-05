@@ -221,6 +221,7 @@ export interface Detection {
   app_services: string[];
   routing: { file: string; variable: string; services: string[] } | null;
   routing_problem: string | null;
+  inline: { service: string; variable: string }[];
   migrations: { tool: string; dirs: string[]; command: string | null; service: string | null };
   notes: string[];
 }
@@ -228,7 +229,8 @@ export interface Detection {
 /** The parts of `sidetrack.toml` the Add project sheet shows (`config::Config`). */
 export interface ProjectConfig {
   database: { engine: string; service: string; user: string };
-  routing: { mode: string; file: string; variable: string; restart: string[] };
+  routing: { mode: string; file: string; variable: string; restart: string[]; database?: string; listen?: string };
+  compose?: { files?: string[] };
   migrations: { tool: string; dirs: string[]; command: string };
   git: { main_branch: string | null };
 }
@@ -244,4 +246,5 @@ export interface AddPreview {
   toml: string;
   database_running: boolean;
   hook_installed: boolean;
+  proxy_upstream: string | null;
 }
