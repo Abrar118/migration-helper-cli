@@ -2,7 +2,7 @@
 
 Last updated 2026-11-05. Read `CLAUDE.md` first, then this.
 
-## Compose setup fixes (this PR)
+## Compose setup fixes (merged PR #32)
 
 - Compose environment parsing accepts maps and `KEY=value` lists, preserving embedded `=`, empty strings and bare names.
 - Add project offers a Compose file picker and guided proxy routing for inline JDBC URLs. The CLI accepts repeated `init -f` / `--compose-file` flags. Selected files are persisted and used by generated Compose migration commands, Start and Add; both actions recheck the reviewed settings.
@@ -11,6 +11,14 @@ Last updated 2026-11-05. Read `CLAUDE.md` first, then this.
 - Second review: the host-OS/local-Docker listener assumption and remote-daemon limitation are explicit in decision 42 and the README. A pure listener policy tests all four host/container combinations. Absolute-path warnings now come from one core helper and appear in both CLI and app, including CLI `--yes`; paths remain supported. No bridge discovery or unrelated minor changes were added.
 - Razorbill's `docker-compose-dev.yml` passes a read-only proxy setup preview; no Razorbill files or databases were modified. Its generated `flyway migrate` command still needs validation: the app bundles Flyway in Spring Boot, rather than providing a standalone Flyway executable. No real switch was applied there.
 - Verification: 93 workspace tests (88 core, 2 CLI integration, 3 app) with a dedicated Postgres container, both Clippy checks, formatting, UI/native builds; browser smoke checks of ordered override selection/reordering/removal, migration-command notices, custom proxy ports, proxy confirmation, database start, rereview and Add in Press Proof/light and Canvas/dark. Native file-dialog interaction and real Razorbill Apply remain untested.
+
+## Next session: AI-assisted configuration discovery
+
+- The owner plans to compact this conversation, then discuss an AI model for finding database connections, configuration formats/files and migration setup across projects. No AI design or model choice is approved, and no model has been bundled, trained or benchmarked.
+- The published Tiny Recursive Model (TRM) was considered; its demonstrated puzzle tasks do not establish repository/configuration discovery capability. A small pretrained code-language model was suggested as an alternative to evaluate, not selected. Any future discovery output still needs deterministic validation and the existing plan/review/apply safeguards.
+- Separately deferred: keeping project files untouched through Sidetrack-owned external Compose overrides and external configuration storage. This is not implemented; current Sidetrack still expects sidetrack.toml inside the repository. Do not fold this into the AI work without discussing scope.
+- Remaining review items from PR #32 were intentionally left outside the second follow-up: localhost false-positive exposure warnings, exposure warnings remaining advisory, missing standalone-proxy/post-add network notices, upstream-normalization test coverage, duplicate port extraction and duplicate override entries.
+- Local testing uses OrbStack on macOS. The throwaway project is `../sidetrack-playground`, with main, feature/orders and feature/notes, its own registry, and install-cli.sh / run-app.sh / start.sh. Razorbill files and databases were not changed; its Spring Boot/Flyway migration command remains unvalidated before real Apply.
 
 ## State
 
@@ -45,6 +53,7 @@ Last updated 2026-11-05. Read `CLAUDE.md` first, then this.
 | Showcase screenshots in `public/`; Vite pre-bundles the Tauri modules | merged (PR #29) |
 | Desktop app: a second look, "Canvas" (sidebar of sections, node canvases, drag and drop); host-drive disk space under Docker Desktop | merged (PR #30) |
 | Handoff update after PR #30 | merged (PR #31) |
+| Compose environment formats, explicit Compose files, guided proxy setup and review fixes | merged (PR #32) |
 
 `main` is protected. Every PR needs one approval, including a code-owner review (`@Abrar118`). The owner can bypass the rules. Force-pushes and deletion are blocked.
 
