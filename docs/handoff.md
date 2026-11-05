@@ -22,8 +22,9 @@ Last updated 2026-11-05. Read `CLAUDE.md` first, then this.
 | Handoff update after PR #14 | merged (PR #15) |
 | Desktop app: project view (linked git branches and DB branch tree); `Git::log` | merged (PR #16) |
 | Desktop app: plans and Apply for create, snapshot, reset, delete, rename, gc | merged (PR #17, via #16's branch) |
-| **Desktop app: proof devices on sheets with nothing to apply; lead, sign-off and Escape fixes** | **open as PR #20.** PR #18 merged into `feat/app-plans` after that branch was already merged, so its commits never reached `main`; #20 re-opens the same branch against `main`. |
-| **TLS between the app and the proxy** | **open as PR #19** (CI green, including the TLS e2e step) |
+| Desktop app: proof devices on sheets with nothing to apply; lead, sign-off and Escape fixes | merged (PR #20; first merged as #18 into an already-merged base, see below) |
+| Handoff update after PRs #15–#17 | merged (PR #21) |
+| TLS between the app and the proxy | merged (PR #19) |
 
 `main` is protected. Every PR needs one approval, including a code-owner review (`@Abrar118`). The owner can bypass the rules. Force-pushes and deletion are blocked.
 
@@ -31,7 +32,7 @@ After every PR merge, update this file: the State table, the follow-ups, and the
 
 Stacked PRs: merge the bottom one into `main` first, then retarget the next one to `main` before merging it. Merging an upper PR into its stacked base after that base has merged strands its commits (that's what happened to #18).
 
-Stale remote branches were deleted on 2026-11-04. Since then, the merged branches `docs/handoff-after-pr10`, `feat/desktop-app`, `docs/handoff-after-pr12`, `feat/app-proxy-autostart`, `docs/handoff-after-pr14`, `feat/app-project-view` and `feat/app-plans` are back on the remote. The owner will clean them up later.
+Stale remote branches were deleted on 2026-11-04. Since then, the merged branches `docs/handoff-after-pr10`, `feat/desktop-app`, `docs/handoff-after-pr12`, `feat/app-proxy-autostart`, `docs/handoff-after-pr14`, `feat/app-project-view`, `feat/app-plans`, `docs/handoff-after-pr17`, `feat/app-sheet-proofs` and `feat/proxy-tls` are back on the remote. The owner will clean them up later.
 
 ## Getting going on a new machine
 
@@ -74,7 +75,7 @@ See plan-v1.md, "Local proxy (v2)", decisions 17–25.
   - Each worktree's env file is pointed at its own port automatically (`SetEnvPort`).
   - Removed worktrees free their port, and their database stops counting as in use.
   - Env mode in a worktree only warns, because a containerized app resolves `db` to its own compose network. Proxy mode is the supported setup for worktrees.
-- **TLS** (PR #19, open): the proxy terminates TLS from the app with a self-signed certificate (`proxy-tls.pem` next to the registry; rustls with `ring`, rcgen). The proxy-to-Postgres leg stays plain. Decisions 31–35 in `plan-v1.md` are on that branch.
+- ✅ **TLS:** done in PR #19. The proxy terminates TLS from the app with a self-signed certificate (`proxy-tls.pem` next to the registry; rustls with `ring`, rcgen). The proxy-to-Postgres leg stays plain. See plan-v1.md, decisions 31–35.
   - Left out: TLS upstream (with TLS on both sides, libpq's `channel_binding=prefer` ties SCRAM to the proxy's certificate and the server rejects the login, so it needs the auth exchange rewritten), and PG17 `sslnegotiation=direct`.
 
 ## Open question for the owner
@@ -110,10 +111,10 @@ See plan-v1.md, "Local proxy (v2)", decisions 17–25.
 **Plans for other operations (PR #17):** `ops.rs` adds `plan_op` / `apply_op` keyed by an `Op` enum (switch, create, snapshot, reset, delete, rename, gc), mirroring the CLI's `plan_command`; `apply_switch` is folded in. Actions sit on the selected DB node, on a git branch with no DB (create), and "Clean up" (gc) in the lead. Destructive plans render for the first time: drops in spot, Apply disabled until the plan-worded checkbox is ticked.
 - Gaps: reset only offers the node's parent or its own snapshots (the CLI's `--to` takes any); no `snapshot rm`; if `plan_op` can't start the proxy, the reason only goes to stderr.
 
-**Sheet devices and fixes (PR #20, open):** a registration target on in-sync / "nothing to clean up" sheets, a step-colour tint ramp in Settings, the sign-off always reachable on tall proofs, lead and path wrapping, Escape after a failed apply.
+**Sheet devices and fixes (PR #20):** a registration target on in-sync / "nothing to clean up" sheets, a step-colour tint ramp in Settings, the sign-off always reachable on tall proofs, lead and path wrapping, Escape after a failed apply.
 - `.impeccable/design.json` is older than `DESIGN.md` and lacks the project view and new devices; `/impeccable document` would refresh it.
 
-**Still to check on a real machine** (owner, `npm run tauri dev`): the project view, including a project with the db container stopped and one with a linked worktree; applying a delete and a reset.
+**Still to check on a real machine** (owner, `npm run tauri dev`): the project view, including a project with the db container stopped and one with a linked worktree; applying a delete and a reset; an `sslmode=require` app through the proxy.
 
 **Not built yet:**
 - **Approval requests from the git hook** (v2).
