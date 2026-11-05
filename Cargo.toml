@@ -23,3 +23,7 @@ sha2 = "0.10"
 clap = { version = "4", features = ["derive"] }
 dirs = "5"
 tempfile = "3"
+# TLS for the proxy. `ring`, not the default aws-lc-rs: it only needs a C
+# compiler (already required by rusqlite's bundled SQLite), no cmake or nasm.
+rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"] }
+rcgen = { version = "0.14", default-features = false, features = ["ring", "pem"] }

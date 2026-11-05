@@ -156,6 +156,14 @@ for _ in $(seq 1 30); do kill -0 "$held" 2>/dev/null || break; sleep 0.2; done
 if kill -0 "$held" 2>/dev/null; then fail "the open connection to feature_a_db should have been closed"; fi
 grep -q "closed 1 connection" "$plog" || fail "proxy should log the closed connection"
 
+step "sslmode=require and verify-full clients connect through the proxy over TLS"
+tls_sql() { docker compose exec -T api sh -c 'psql "$DATABASE_URL?$0" -qtAX -c "select current_database()"' "$1"; }
+[ "$(tls_sql sslmode=require)" = app_dev ] || fail "an sslmode=require client should connect through the proxy"
+cp "$work/proxy-tls.pem" proxy-tls.pem   # the proxy's certificate, next to the registry
+[ "$(tls_sql 'sslmode=verify-full&sslrootcert=/app/proxy-tls.pem')" = app_dev ] \
+  || fail "the proxy's certificate should verify for host.docker.internal"
+rm proxy-tls.pem
+
 step "a git worktree gets its own database and its own proxy port"
 wt="$work/wt"
 git worktree add -q -b feature/w "$wt"

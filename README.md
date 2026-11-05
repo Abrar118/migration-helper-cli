@@ -145,7 +145,7 @@ services:
 - **Running it:** sidetrack starts the proxy in the background when a command or the git hook needs it (`autostart = false` turns that off). You can also start it with `sidetrack proxy --daemon`, or run `sidetrack proxy` in its own terminal. Stop it with `sidetrack proxy --stop`.
 - **No restarts, even for copies:** while the proxy is running, copying the database the app is using doesn't stop the app. The proxy holds the app's new connections for the few seconds the copy takes, then lets them through to the new database. A switch then only changes where `app_dev` goes. The proxy closes the app's open connections to the old database, so its connection pool reconnects to the new one.
 - **Other databases:** connections to any other name pass through unchanged.
-- **Encryption:** the proxy doesn't speak TLS. Use `sslmode=prefer` (the default) or `disable`.
+- **Encryption:** the proxy accepts TLS, so `sslmode=prefer` (the default) and `require` both work. It uses a self-signed certificate that sidetrack creates once per machine, next to its registry (`proxy-tls.pem`, e.g. `~/.local/share/sidetrack/` on Linux). For `verify-full`, point `sslrootcert` at that file; it is valid for `localhost`, `127.0.0.1` and `host.docker.internal`. The proxy talks to Postgres without TLS.
 - **Linux:** when the app runs in a container, listen on `0.0.0.0` (or the Docker bridge address), not `127.0.0.1`.
 
 ### Git worktrees

@@ -1018,6 +1018,21 @@ fn proxy(dir: &Path, listen: Option<String>) -> Result<bool> {
     let listener = std::net::TcpListener::bind(&listen)
         .with_context(|| format!("can't listen on {listen} (is another proxy running?)"))?;
     let target_file = ws.proxy_target_path();
+    // One certificate per machine, next to the registry, so clients that trust
+    // it work with every project and worktree. Without it the proxy still runs,
+    // answering SSL requests with "no" as before.
+    let tls_file = registry::default_path()?.with_file_name("proxy-tls.pem");
+    let tls = match sidetrack_core::proxy::tls_config(&tls_file) {
+        Ok(c) => Some(c),
+        Err(e) => {
+            eprintln!(
+                "sidetrack proxy: TLS is off, so clients with sslmode=require can't connect \
+                 ({}: {e}). Fix or delete that file, then restart the proxy.",
+                tls_file.display()
+            );
+            None
+        }
+    };
     eprintln!(
         "sidetrack proxy: {listen} → {upstream}; {app_db} → {} (Ctrl-C to stop)",
         sidetrack_core::proxy::read_target(&target_file, &app_db)
@@ -1028,6 +1043,7 @@ fn proxy(dir: &Path, listen: Option<String>) -> Result<bool> {
         target_file,
         hold_file: ws.proxy_hold_path(),
         poll: std::time::Duration::from_millis(250),
+        tls,
     };
     p.serve(
         listener,
