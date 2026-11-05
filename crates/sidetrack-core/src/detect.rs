@@ -223,9 +223,13 @@ fn find_routing(
                 .or_default()
                 .push(svc.clone()),
             Ok(None) => {
-                problems.push(format!(
-                    "{svc}: {var} is written directly in the compose file; move it to an untracked \
-                     .env file so sidetrack can change it, or use `sidetrack init --proxy`"
+                problems.push(inline_problem(
+                    root,
+                    compose_dir,
+                    views,
+                    svc,
+                    &var,
+                    active_db,
                 ));
                 inline.push(Inline {
                     service: svc.clone(),
@@ -262,6 +266,63 @@ fn find_routing(
         None,
         inline,
     )
+}
+
+/// What to do when `var` is written directly in compose `environment:`: the
+/// one-line edit that takes the DB name from the project .env, with the
+/// current name as default so nothing changes where the variable isn't set.
+/// sidetrack never makes this edit itself, since the compose file is tracked.
+fn inline_problem(
+    root: &Path,
+    compose_dir: &Path,
+    views: &ComposeViews,
+    svc: &str,
+    var: &str,
+    active_db: &str,
+) -> String {
+    let start = format!("{svc}: {var} is written directly in the compose file");
+    let fallback = format!(
+        "{start}; move it to an untracked .env file so sidetrack can change it, or use `sidetrack init --proxy`"
+    );
+    let Some(raw) = views.raw.services.get(svc).and_then(|s| s.env(var)) else {
+        return fallback;
+    };
+    let dotenv = compose_dir.join(".env");
+    let dotenv_text = std::fs::read_to_string(&dotenv).unwrap_or_default();
+    // Setting a name that .env or any compose value (`command:`, `healthcheck:`, …)
+    // already uses would move those connections too, so pick one nothing uses.
+    // An exported name would override .env, so later switches wouldn't take effect.
+    let in_use = |name: &str| {
+        envfile::get(&dotenv_text, name).is_some_and(|v| v != active_db)
+            || references(&views.raw.json, name)
+            || std::env::var_os(name).is_some()
+    };
+    let name = ["DB_NAME".to_string(), "SIDETRACK_DB_NAME".to_string()]
+        .into_iter()
+        .chain((2..).map(|n| format!("SIDETRACK_DB_NAME_{n}")))
+        .find(|n| !in_use(n))
+        .expect("candidate names never run out");
+    let Ok(value) = envfile::replace_db_name(raw, &format!("${{{name}:-{active_db}}}")) else {
+        return fallback;
+    };
+    let env = relative(root, &dotenv);
+    // Only the value: compose files write `KEY=value` or `KEY: value`, and sidetrack can't tell which.
+    format!(
+        "{start}, so sidetrack can't change it. Change its value to `{value}` in the compose file, \
+         keeping the line's existing format, and set `{name}={active_db}` in {env} (keep {env} out \
+         of git); the default keeps {active_db} wherever {name} isn't set. Then check again, or \
+         use proxy routing instead (`sidetrack init --proxy`)"
+    )
+}
+
+/// Whether a raw compose value refers to `name` as `$name` or `${name…}`.
+fn references(value: &str, name: &str) -> bool {
+    ["${", "$"].iter().any(|prefix| {
+        let needle = format!("{prefix}{name}");
+        value.match_indices(&needle).any(|(i, m)| {
+            !value[i + m.len()..].starts_with(|c: char| c.is_ascii_alphanumeric() || c == '_')
+        })
+    })
 }
 
 /// Find which env file (and variable) a service's `var` really comes from.
@@ -928,6 +989,139 @@ mod tests {
         assert_eq!(cfg.routing.database.as_deref(), Some("postgres"));
         assert_eq!(cfg.routing.restart, ["web"]);
         assert!(cfg.routing.file.is_empty());
+    }
+
+    /// Razorbill's shape: a JDBC URL written in a list-form `environment:`.
+    fn inline_jdbc_views(url: &str, extra: &str) -> ComposeViews {
+        let resolved = model(
+            r#"{"services":{
+            "db":{"image":"postgres:17-alpine","environment":{"POSTGRES_DB":"razorbill"}},
+            "app":{"depends_on":["db"],"environment":{"SPRING_DATASOURCE_URL":"jdbc:postgresql://db:5432/razorbill"}}
+        }}"#,
+        );
+        let raw = model(&format!(
+            r#"{{"services":{{
+            "db":{{"image":"postgres:17-alpine","environment":["POSTGRES_DB=razorbill"]}},
+            "app":{{"depends_on":["db"],"environment":["SPRING_DATASOURCE_URL={url}"]}}{extra}
+        }}}}"#
+        ));
+        ComposeViews {
+            resolved,
+            env_files: raw.clone(),
+            raw,
+        }
+    }
+
+    #[test]
+    fn inline_url_suggests_the_one_line_edit_and_it_then_routes() {
+        let dir = tempfile::tempdir().unwrap();
+        write(dir.path(), "migrations/001.sql", "");
+        let views = inline_jdbc_views("jdbc:postgresql://db:5432/razorbill", "");
+        let problem = detect(dir.path(), dir.path(), &views)
+            .unwrap()
+            .routing_problem
+            .unwrap();
+        // Only the value, so it fits both `KEY=value` and `KEY: value` compose files.
+        assert!(
+            problem.contains("`jdbc:postgresql://db:5432/${DB_NAME:-razorbill}`"),
+            "{problem}"
+        );
+        assert!(!problem.contains("SPRING_DATASOURCE_URL="), "{problem}");
+        assert!(problem.contains("`DB_NAME=razorbill` in .env"), "{problem}");
+
+        // After the user applies it, env mode routes through DB_NAME in .env.
+        write(dir.path(), ".env", "DB_NAME=razorbill\n");
+        let views = inline_jdbc_views("jdbc:postgresql://db:5432/${DB_NAME:-razorbill}", "");
+        let mut d = detect(dir.path(), dir.path(), &views).unwrap();
+        d.migrations.command = Some("./migrate.sh".into());
+        let routing = d.routing.as_ref().unwrap();
+        assert_eq!(
+            (routing.file.as_str(), routing.variable.as_str()),
+            (".env", "DB_NAME")
+        );
+        assert_eq!(routing.services, ["app"]);
+        d.to_config(None, false, vec![])
+            .unwrap()
+            .validate()
+            .unwrap();
+    }
+
+    #[test]
+    fn inline_url_suggestion_avoids_a_db_name_already_in_use() {
+        let dir = tempfile::tempdir().unwrap();
+        write(dir.path(), "migrations/001.sql", "");
+        write(
+            dir.path(),
+            ".env",
+            "DB_NAME=analytics\nSIDETRACK_DB_NAME=reports\n",
+        );
+        let views = inline_jdbc_views("jdbc:postgresql://db:5432/razorbill", "");
+        let problem = detect(dir.path(), dir.path(), &views)
+            .unwrap()
+            .routing_problem
+            .unwrap();
+        assert!(
+            problem.contains("${SIDETRACK_DB_NAME_2:-razorbill}`"),
+            "{problem}"
+        );
+        assert!(
+            problem.contains("`SIDETRACK_DB_NAME_2=razorbill`"),
+            "{problem}"
+        );
+    }
+
+    #[test]
+    fn inline_url_suggestion_avoids_a_name_another_service_reads() {
+        let dir = tempfile::tempdir().unwrap();
+        write(dir.path(), "migrations/001.sql", "");
+        // No .env entries, but setting either name would still move another connection:
+        // DB_NAME in an environment value, SIDETRACK_DB_NAME in a command.
+        let views = inline_jdbc_views(
+            "jdbc:postgresql://db:5432/razorbill",
+            r#","worker":{"environment":["REPORTS_DB=${DB_NAME:-analytics}"]},
+            "backup":{"command":["pg_dump","${SIDETRACK_DB_NAME:-analytics}"]}"#,
+        );
+        let problem = detect(dir.path(), dir.path(), &views)
+            .unwrap()
+            .routing_problem
+            .unwrap();
+        assert!(
+            problem.contains("`SIDETRACK_DB_NAME_2=razorbill`"),
+            "{problem}"
+        );
+    }
+
+    #[test]
+    fn inline_url_suggestion_avoids_an_exported_name() {
+        let dir = tempfile::tempdir().unwrap();
+        write(dir.path(), "migrations/001.sql", "");
+        write(
+            dir.path(),
+            ".env",
+            "DB_NAME=a\nSIDETRACK_DB_NAME=b\nSIDETRACK_DB_NAME_2=c\n",
+        );
+        // An export overrides .env, even with the same value. No other test uses _3.
+        std::env::set_var("SIDETRACK_DB_NAME_3", "razorbill");
+        let views = inline_jdbc_views("jdbc:postgresql://db:5432/razorbill", "");
+        let problem = detect(dir.path(), dir.path(), &views)
+            .unwrap()
+            .routing_problem
+            .unwrap();
+        std::env::remove_var("SIDETRACK_DB_NAME_3");
+        assert!(
+            problem.contains("`SIDETRACK_DB_NAME_4=razorbill`"),
+            "{problem}"
+        );
+    }
+
+    #[test]
+    fn references_match_whole_variable_names() {
+        assert!(references("${DB_NAME}", "DB_NAME"));
+        assert!(references("postgres://db/${DB_NAME:-x}", "DB_NAME"));
+        assert!(references("$DB_NAME", "DB_NAME"));
+        assert!(!references("${DB_NAME_2}", "DB_NAME"));
+        assert!(!references("${SIDETRACK_DB_NAME}", "DB_NAME"));
+        assert!(!references("$DB_NAMES", "DB_NAME"));
     }
 
     #[test]
