@@ -1,12 +1,44 @@
-import { Fragment, useCallback, useEffect, useRef, useState, type KeyboardEvent, type ReactNode } from "react";
-import { loadDetail } from "./api";
+import { Fragment, useCallback, useEffect, useRef, useState, type FormEvent, type KeyboardEvent, type ReactNode } from "react";
+import { loadDetail, planOp } from "./api";
 import { ago, bytes, plural } from "./format";
+import { Proof } from "./Proof";
 import { Queries, Sheet } from "./Sheets";
 import { Code, sentence, Slug } from "./text";
-import type { DbBranchView, GitBranchView, ProjectDetail, ServiceView } from "./types";
+import type { DbBranchView, GitBranchView, Op, Plan, ProjectDetail, ServiceView } from "./types";
 
 /** What's selected. A git branch and its DB branch are selected together. */
 type Selection = { git: string } | { db: string };
+
+/** Where an action lives: a DB node, a git row, or the whole project (gc). */
+type Place = `db:${string}` | `git:${string}` | "project";
+
+/** An inline field that's open: a snapshot label or a rename target. */
+type Field = { kind: "snapshot" | "rename"; db: string } | null;
+
+/** The plan on screen instead of the tree, and the operation it came from. */
+interface Shown {
+  op: Op;
+  plan: Plan;
+  title: string;
+}
+
+/** What the planner said no to, shown where the action was chosen. */
+interface Refusal {
+  place: Place;
+  message: string;
+}
+
+/** The functions an action needs: plan an operation, open or close a field. */
+interface Actions {
+  /** The action being planned right now, by `place` + label. */
+  planning: string | null;
+  refusal: Refusal | null;
+  field: Field;
+  setField: (f: Field) => void;
+  show: (place: Place, key: string, op: Op, title: string) => void;
+}
+
+const message = (e: unknown) => sentence(e instanceof Error ? e.message : String(e));
 
 interface Props {
   root: string;
@@ -26,7 +58,14 @@ export function ProjectPage({ root, top, planWaiting, onBack }: Props) {
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [sel, setSel] = useState<Selection | null>(null);
+  const [field, setField] = useState<Field>(null);
+  const [planning, setPlanning] = useState<string | null>(null);
+  const [refusal, setRefusal] = useState<Refusal | null>(null);
+  const [shown, setShown] = useState<Shown | null>(null);
+  const [applying, setApplying] = useState(false);
   const busy = useRef(false);
+  const shownRef = useRef(shown);
+  shownRef.current = shown;
 
   const refresh = useCallback(async () => {
     if (busy.current) return;
@@ -51,20 +90,68 @@ export function ProjectPage({ root, top, planWaiting, onBack }: Props) {
     }
   }, [root]);
 
-  // Like All projects: read again whenever the window comes back to the front.
+  // Like All projects: read again whenever the window comes back to the front,
+  // unless a plan is on screen (it stays as shown until it's closed).
   useEffect(() => {
     refresh();
-    window.addEventListener("focus", refresh);
-    return () => window.removeEventListener("focus", refresh);
+    const onFocus = () => {
+      if (!shownRef.current) refresh();
+    };
+    window.addEventListener("focus", onFocus);
+    return () => window.removeEventListener("focus", onFocus);
   }, [refresh]);
 
+  /** Back to the tree from a proof: read the project again, focus the selection. */
+  const closeProof = useCallback(async () => {
+    setShown(null);
+    setApplying(false);
+    await refresh();
+    requestAnimationFrame(() => (document.querySelector(".node[aria-current='true']") as HTMLElement | null)?.focus());
+  }, [refresh]);
+
+  // Escape steps back one level: proof → tree, open field → closed, tree → all projects.
   useEffect(() => {
     const onKey = (e: globalThis.KeyboardEvent) => {
-      if (e.key === "Escape") onBack();
+      if (e.key !== "Escape") return;
+      if (shown) {
+        if (!applying) closeProof();
+      } else if (field) {
+        setField(null);
+        setRefusal(null);
+      } else {
+        onBack();
+      }
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [onBack]);
+  }, [onBack, shown, applying, field, closeProof]);
+
+  const show = useCallback(
+    async (place: Place, key: string, op: Op, title: string) => {
+      setPlanning(`${place}/${key}`);
+      setRefusal(null);
+      try {
+        const plan = await planOp(root, op);
+        setShown({ op, plan, title });
+        setField(null);
+      } catch (e) {
+        setRefusal({ place, message: message(e) });
+      } finally {
+        setPlanning(null);
+      }
+    },
+    [root],
+  );
+  const actions: Actions = { planning, refusal, field, setField, show };
+
+  // Picking another branch sets an unapplied plan aside; a running one stays.
+  const select = (s: Selection) => {
+    if (applying) return;
+    setSel(s);
+    setShown(null);
+    setField(null);
+    setRefusal(null);
+  };
 
   const name = detail?.name ?? root.split(/[\\/]/).pop() ?? root;
   const gitSel = sel && "git" in sel ? detail?.git_branches.find((b) => b.name === sel.git) ?? null : null;
@@ -82,7 +169,7 @@ export function ProjectPage({ root, top, planWaiting, onBack }: Props) {
       <aside className="col">
         {top}
         <div className="back">
-          <button className="text-button" onClick={onBack}>Back to all projects</button>
+          <button className="text-button" onClick={onBack} disabled={applying}>Back to all projects</button>
         </div>
         <h1 className="project-title">{name}</h1>
         {detail === null && !error ? (
@@ -91,7 +178,8 @@ export function ProjectPage({ root, top, planWaiting, onBack }: Props) {
           <GitList
             branches={detail.git_branches}
             selected={gitShown?.name ?? null}
-            onSelect={(git) => setSel({ git })}
+            onSelect={(git) => select({ git })}
+            extra={(b) => (!b.db && !detail.problem ? <CreateField b={b} detail={detail} actions={actions} /> : null)}
           />
         ) : null}
         {detail && <Containers services={detail.services} />}
@@ -102,18 +190,50 @@ export function ProjectPage({ root, top, planWaiting, onBack }: Props) {
           <p>{detail ? lead(detail, gitShown, dbSel) : error ? `Can't read ${name}` : " "}</p>
           <div className="lead-side">
             {detail && <span className="where"><span className="nw">{detail.path}</span> · <span className="nw">{detail.mode === "proxy" ? "proxy" : "env file"}</span></span>}
-            {planWaiting && <button className="text-button" onClick={onBack}>See the switch plan</button>}
-            <button className="text-button" onClick={refresh} disabled={loading}>{loading ? "Reading…" : "Refresh"}</button>
+            {planWaiting && <button className="text-button" onClick={onBack} disabled={applying}>See the switch plan</button>}
+            {detail && !detail.problem && (
+              <button
+                className="text-button"
+                onClick={() => show("project", "gc", { op: "gc" }, `Clean up ${detail.name}`)}
+                disabled={shown !== null || planning !== null}
+              >
+                {planning === "project/gc" ? "Planning…" : "Clean up"}
+              </button>
+            )}
+            <button className="text-button" onClick={refresh} disabled={loading || shown !== null}>{loading ? "Reading…" : "Refresh"}</button>
           </div>
         </div>
-        {error ? (
+        {shown && detail ? (
+          shown.plan.steps.length === 0 ? (
+            <Sheet label="Nothing to clean up">
+              <h2>Nothing to clean up</h2>
+              <p className="problem-text">Every DB branch still has its git branch, and none is merged or missing.</p>
+              {shown.plan.notes.map((n) => <p key={n} className="note"><Code text={sentence(n)} /></p>)}
+              <div className="row standalone-row"><button className="secondary" autoFocus onClick={closeProof}>Back to the branches</button></div>
+            </Sheet>
+          ) : (
+            <Proof
+              key={JSON.stringify(shown.op)}
+              root={root}
+              name={detail.name}
+              op={shown.op}
+              plan={shown.plan}
+              title={shown.title}
+              disk={detail.disk}
+              freed={freedBytes(shown.plan, detail)}
+              autoFocus
+              onStart={() => setApplying(true)}
+              onClose={closeProof}
+            />
+          )
+        ) : error ? (
           <Sheet label={`Can't read ${name}`}>
             <h2>Can't read {name}</h2>
             <p className="problem-text"><Code text={sentence(error)} /></p>
             <p className="note">Fix it, then refresh.</p>
           </Sheet>
         ) : detail ? (
-          <DbTree detail={detail} selected={dbSel?.db_name ?? null} onSelect={(db) => setSel({ db })} />
+          <DbTree detail={detail} selected={dbSel?.db_name ?? null} onSelect={(db) => select({ db })} actions={actions} />
         ) : null}
       </main>
     </>
@@ -147,7 +267,13 @@ function arrows(ids: string[], current: string | null, select: (id: string) => v
   };
 }
 
-function GitList({ branches, selected, onSelect }: { branches: GitBranchView[]; selected: string | null; onSelect: (name: string) => void }) {
+function GitList({ branches, selected, onSelect, extra }: {
+  branches: GitBranchView[];
+  selected: string | null;
+  onSelect: (name: string) => void;
+  /** Shown under the selected row, after its commits. */
+  extra: (b: GitBranchView) => ReactNode;
+}) {
   const focus = (n: string) => {
     onSelect(n);
     document.getElementById(`git-${n}`)?.focus();
@@ -182,6 +308,7 @@ function GitList({ branches, selected, onSelect }: { branches: GitBranchView[]; 
                 </ol>
               </div>
             )}
+            {on && extra(b)}
           </li>
         );
       })}
@@ -246,7 +373,7 @@ function flatten(nodes: Node[]): string[] {
   return nodes.flatMap((n) => [n.b.db_name, ...flatten(n.children)]);
 }
 
-function DbTree({ detail, selected, onSelect }: { detail: ProjectDetail; selected: string | null; onSelect: (db: string) => void }) {
+function DbTree({ detail, selected, onSelect, actions }: { detail: ProjectDetail; selected: string | null; onSelect: (db: string) => void; actions: Actions }) {
   const roots = tree(detail.db_branches);
   const focus = (db: string) => {
     onSelect(db);
@@ -260,7 +387,13 @@ function DbTree({ detail, selected, onSelect }: { detail: ProjectDetail; selecte
   const snapshots = d.db_branches.reduce((n, b) => n + b.snapshots.length, 0);
   const noDb = d.git_branches.filter((b) => !b.db).length;
   const gone = d.db_branches.filter((b) => !b.git_branch_exists).length;
-  const queries = [...(d.problem ? [`${d.problem}. Until then, whether each database still exists is unknown.`] : []), ...d.warnings];
+  const queries = [
+    ...(actions.refusal?.place === "project" ? [actions.refusal.message] : []),
+    ...(d.problem ? [`${d.problem}. Until then, whether each database still exists is unknown.`] : []),
+    ...d.warnings,
+  ];
+  // Changing a database needs the server; without it, the tree is read-only.
+  const nodeActions = (b: DbBranchView) => (d.problem ? null : <NodeActions b={b} detail={d} actions={actions} />);
 
   return (
     <Sheet label={`Database branches of ${d.name}`}>
@@ -272,7 +405,7 @@ function DbTree({ detail, selected, onSelect }: { detail: ProjectDetail; selecte
         </p>
       ) : (
         <ul className="tree" role="tree" aria-label="Database branches" onKeyDown={arrows(flatten(roots), selected, focus)}>
-          {roots.map((n) => <TreeNode key={n.b.db_name} n={n} level={1} selected={selected} onSelect={onSelect} />)}
+          {roots.map((n) => <TreeNode key={n.b.db_name} n={n} level={1} selected={selected} onSelect={onSelect} actions={nodeActions} />)}
         </ul>
       )}
       <Slug
@@ -289,7 +422,13 @@ function DbTree({ detail, selected, onSelect }: { detail: ProjectDetail; selecte
   );
 }
 
-function TreeNode({ n, level, selected, onSelect }: { n: Node; level: number; selected: string | null; onSelect: (db: string) => void }) {
+function TreeNode({ n, level, selected, onSelect, actions }: {
+  n: Node;
+  level: number;
+  selected: string | null;
+  onSelect: (db: string) => void;
+  actions: (b: DbBranchView) => ReactNode;
+}) {
   const b = n.b;
   const on = b.db_name === selected;
   return (
@@ -316,9 +455,10 @@ function TreeNode({ n, level, selected, onSelect }: { n: Node; level: number; se
           ))}
         </ul>
       )}
+      {on && actions(b)}
       {n.children.length > 0 && (
         <ul role="group" className="children">
-          {n.children.map((c) => <TreeNode key={c.b.db_name} n={c} level={level + 1} selected={selected} onSelect={onSelect} />)}
+          {n.children.map((c) => <TreeNode key={c.b.db_name} n={c} level={level + 1} selected={selected} onSelect={onSelect} actions={actions} />)}
         </ul>
       )}
     </li>
@@ -334,4 +474,180 @@ function dbState(b: DbBranchView): ReactNode {
     b.on_server === false && <strong>not on the server</strong>,
     `${b.adopted ? "adopted" : "created"} ${ago(b.created_at)}`,
   ].filter(Boolean));
+}
+
+// ---------------------------------------------------------------- actions
+
+/** Bytes the plan's drops free, from the sizes the project view knows. */
+function freedBytes(plan: Plan, d: ProjectDetail): number {
+  const size = new Map<string, number>();
+  for (const b of d.db_branches) {
+    size.set(b.db_name, b.size_bytes ?? 0);
+    for (const s of b.snapshots) size.set(s.db_name, s.size_bytes ?? 0);
+  }
+  return plan.steps.reduce((n, s) => n + (s.type === "drop_database" ? size.get(s.name) ?? 0 : 0), 0);
+}
+
+/** A text button that plans `op`, reading "Planning…" while it does. */
+function PlanButton({ actions, place, label, op, title, children }: {
+  actions: Actions;
+  place: Place;
+  label: string;
+  op: Op;
+  title: string;
+  children: ReactNode;
+}) {
+  const key = `${place}/${label}`;
+  return (
+    <button type="button" className="text-button" disabled={actions.planning !== null} onClick={() => actions.show(place, label, op, title)}>
+      {actions.planning === key ? "Planning…" : children}
+    </button>
+  );
+}
+
+/** What can be done to the selected DB branch, under its node. */
+function NodeActions({ b, detail, actions }: { b: DbBranchView; detail: ProjectDetail; actions: Actions }) {
+  const place: Place = `db:${b.db_name}`;
+  const Db = ({ children }: { children: ReactNode }) => <span className="db">{children}</span>;
+  if (b.worktree) {
+    return (
+      <div className="actions">
+        <p className="action-note">The app in <Db>{b.worktree}</Db> uses it, so change it from that worktree.</p>
+      </div>
+    );
+  }
+  const parent = b.parent ? detail.db_branches.find((p) => p.db_name === b.parent && p.on_server !== false) : undefined;
+  const snaps = b.snapshots.filter((s) => s.on_server !== false);
+  const field = actions.field?.db === b.db_name ? actions.field.kind : null;
+  const refusal = actions.refusal?.place === place ? actions.refusal.message : null;
+  const open = (kind: "snapshot" | "rename") => actions.setField(field === kind ? null : { kind, db: b.db_name });
+  const busy = actions.planning !== null;
+
+  return (
+    <div className="actions" aria-label={`Actions for ${b.db_name}`} role="group">
+      <div className="action-row">
+        {b.active && (
+          <button type="button" className="text-button" aria-expanded={field === "snapshot"} disabled={busy} onClick={() => open("snapshot")}>
+            Snapshot
+          </button>
+        )}
+        {b.active && parent && (
+          <PlanButton actions={actions} place={place} label="reset-parent" op={{ op: "reset", to: null, parent: true }} title={`Reset ${b.db_name} to ${parent.db_name}`}>
+            Reset to <Db>{parent.db_name}</Db>
+          </PlanButton>
+        )}
+        {b.active && snaps.map((s) => (
+          <PlanButton key={s.db_name} actions={actions} place={place} label={`reset-${s.db_name}`} op={{ op: "reset", to: s.db_name, parent: false }} title={`Reset ${b.db_name} to snapshot ${s.seq}`}>
+            Reset to snapshot {s.seq}
+          </PlanButton>
+        ))}
+        <button type="button" className="text-button" aria-expanded={field === "rename"} disabled={busy} onClick={() => open("rename")}>
+          Rename
+        </button>
+        {!b.active && (
+          <PlanButton actions={actions} place={place} label="delete" op={{ op: "delete", name: b.db_name }} title={`Delete ${b.db_name}`}>
+            Delete
+          </PlanButton>
+        )}
+      </div>
+      {b.active && <p className="action-note">The app uses it, so it can't be deleted. Switch to another branch first.</p>}
+      {field === "snapshot" && (
+        <InlineField
+          id={`snap-${b.db_name}`}
+          label="Label (optional)"
+          initial=""
+          code={false}
+          planning={actions.planning === `${place}/snapshot`}
+          disabled={busy}
+          onCancel={() => actions.setField(null)}
+          onSubmit={(v) => actions.show(place, "snapshot", { op: "snapshot", label: v || null }, `Snapshot ${b.db_name}`)}
+        />
+      )}
+      {field === "rename" && (
+        <InlineField
+          id={`rename-${b.db_name}`}
+          label="New git branch name"
+          initial={b.git_branch}
+          code
+          planning={actions.planning === `${place}/rename`}
+          disabled={busy}
+          invalid={(v) => v === "" || v === b.git_branch}
+          onCancel={() => actions.setField(null)}
+          onSubmit={(v) => actions.show(place, "rename", { op: "rename", old: b.db_name, new: v }, `Rename ${b.db_name}`)}
+        />
+      )}
+      {refusal && <p className="query"><strong>Query</strong> <Code text={refusal} /></p>}
+    </div>
+  );
+}
+
+/** A small inline form: one labelled field, "Show the plan" and "Cancel". */
+function InlineField({ id, label, initial, code, planning, disabled, invalid, onCancel, onSubmit }: {
+  id: string;
+  label: string;
+  initial: string;
+  /** Set the value in the database face (a branch name). */
+  code: boolean;
+  planning: boolean;
+  disabled: boolean;
+  invalid?: (value: string) => boolean;
+  onCancel: () => void;
+  onSubmit: (value: string) => void;
+}) {
+  const [value, setValue] = useState(initial);
+  const input = useRef<HTMLInputElement>(null);
+  useEffect(() => {
+    input.current?.focus();
+    input.current?.select();
+  }, []);
+  const v = value.trim();
+  const submit = (e: FormEvent) => {
+    e.preventDefault();
+    if (!invalid?.(v)) onSubmit(v);
+  };
+  return (
+    <form className="inline-field" onSubmit={submit}>
+      <label htmlFor={id}>{label}</label>
+      <div className="field-row">
+        <input
+          id={id}
+          className={code ? "db" : undefined}
+          value={value}
+          onChange={(e) => setValue(e.target.value)}
+          ref={input}
+          spellCheck={false}
+          autoComplete="off"
+        />
+        <button type="submit" className="secondary" disabled={disabled || Boolean(invalid?.(v))}>{planning ? "Planning…" : "Show the plan"}</button>
+        <button type="button" className="text-button" onClick={onCancel}>Cancel</button>
+      </div>
+    </form>
+  );
+}
+
+/** A git branch with no database: create one, from the base sidetrack picks or one you choose. */
+function CreateField({ b, detail, actions }: { b: GitBranchView; detail: ProjectDetail; actions: Actions }) {
+  const place: Place = `git:${b.name}`;
+  const [from, setFrom] = useState("auto");
+  const bases = detail.db_branches.filter((d) => d.on_server !== false);
+  const refusal = actions.refusal?.place === place ? actions.refusal.message : null;
+  const submit = (e: FormEvent) => {
+    e.preventDefault();
+    const op: Op = { op: "create", git_branch: b.name, from: from === "auto" || from === "empty" ? null : from, empty: from === "empty" };
+    actions.show(place, "create", op, `Create a database for ${b.name}`);
+  };
+  return (
+    <form className="inline-field create" onSubmit={submit}>
+      <label htmlFor={`from-${b.name}`}>Create its database from</label>
+      <select id={`from-${b.name}`} value={from} onChange={(e) => setFrom(e.target.value)}>
+        <option value="auto">The closest match</option>
+        {bases.map((d) => <option key={d.db_name} value={d.db_name}>{d.db_name}</option>)}
+        <option value="empty">Nothing (start empty)</option>
+      </select>
+      <button type="submit" className="secondary" disabled={actions.planning !== null}>
+        {actions.planning === `${place}/create` ? "Planning…" : "Show the plan"}
+      </button>
+      {refusal && <p className="query"><strong>Query</strong> <Code text={refusal} /></p>}
+    </form>
+  );
 }
