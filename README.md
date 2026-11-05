@@ -175,6 +175,8 @@ Detected migration tools: Alembic, Django, Prisma, Rails, Flyway and Knex. Anyth
 
 **Add project** (in the column, or on the empty screen) adds a repository from the app: pick its folder and the app shows what `sidetrack init` would set up. That's the database, the variable it rewrites, the migration tool and the `sidetrack.toml` it writes. It can start the database if it isn't running, and can install the git hook. Proxy mode is still set up with `sidetrack init --proxy`.
 
+The column on the left folds away with the button before the wordmark, or Ctrl+B (⌘B on a Mac), to give the plan the whole window.
+
 **Open project** shows one project as two linked panes: its git branches on the left (with their last few commits and the worktree each is checked out in), and its database branches on the right as a parent → child tree, with snapshots and which worktree uses each database. Selecting a branch on one side selects its partner on the other. Git branches with no database yet, and databases whose git branch is gone, are marked as such. The foot of the column shows whether the database and app containers are running.
 
 The other operations live in that view, where they apply: select a database to snapshot it, reset it to its parent or to one of its snapshots, rename it or delete it; select a git branch with no database to create one (from the closest match, a database you pick, or empty); **Clean up** runs `gc`. Each shows its plan as a proof first, the same plan the CLI would show. Plans that drop a database mark the drops in red and keep **Apply** disabled until you tick "This can't be undone".

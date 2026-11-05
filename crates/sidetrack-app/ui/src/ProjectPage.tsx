@@ -171,7 +171,7 @@ export function ProjectPage({ root, top, planWaiting, onBack }: Props) {
 
   return (
     <>
-      <aside className="col">
+      <aside className="col" id="column">
         {top}
         <div className="back">
           <button className="text-button" onClick={onBack} disabled={applying}>Back to all projects</button>
