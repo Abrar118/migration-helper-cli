@@ -128,6 +128,10 @@ impl Setup {
                 }
             }
         }
+        // A URL written in the compose file has its own fix, so skip "write it by hand".
+        if !proxy && found.routing.is_none() && !found.inline.is_empty() {
+            bail!("{}", found.routing_problem.as_deref().unwrap_or_default());
+        }
         let cfg = found.to_config(main_branch, proxy, compose_files).context(
             "detection is incomplete; write sidetrack.toml by hand (see README) and run `sidetrack init` again",
         )?;

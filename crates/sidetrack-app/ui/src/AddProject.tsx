@@ -119,6 +119,7 @@ export function AddProject({ dir, onPickAgain, onCancel, onDone }: {
         {choices}
         <p className="note">sidetrack needs a git repository whose docker-compose has a Postgres service.</p>
         <div className="row standalone-row">
+          <button className="secondary" onClick={read}>Check again</button>
           <button className="secondary" onClick={onPickAgain}>Choose another folder</button>
           <button className="text-button" onClick={onCancel}>Cancel</button>
         </div>

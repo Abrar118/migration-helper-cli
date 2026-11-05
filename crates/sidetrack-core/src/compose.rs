@@ -157,6 +157,9 @@ pub struct ComposeModel {
     pub name: String,
     #[serde(default)]
     pub services: BTreeMap<String, Service>,
+    /// The whole `docker compose config` output, for fields not modelled here.
+    #[serde(skip)]
+    pub json: String,
 }
 
 #[derive(Debug, Clone, Default, Deserialize)]
@@ -225,7 +228,10 @@ where
 
 impl ComposeModel {
     pub fn from_json(json: &str) -> Result<Self> {
-        serde_json::from_str(json).context("parsing `docker compose config` output")
+        let mut model: Self =
+            serde_json::from_str(json).context("parsing `docker compose config` output")?;
+        model.json = json.to_string();
+        Ok(model)
     }
 }
 
