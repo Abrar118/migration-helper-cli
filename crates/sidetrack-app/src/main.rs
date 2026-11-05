@@ -84,14 +84,18 @@ async fn apply_op(
 
 /// What adding the repo at (or above) `dir` would do. Changes nothing.
 #[tauri::command]
-async fn preview_project(dir: String) -> Result<AddPreview, String> {
-    blocking(move || add::preview(&dir)).await
+async fn preview_project(
+    dir: String,
+    compose_files: Vec<String>,
+    proxy: bool,
+) -> Result<AddPreview, String> {
+    blocking(move || add::preview(&dir, compose_files, proxy)).await
 }
 
 /// Start the database container of the repo at `root`.
 #[tauri::command]
-async fn start_database(root: String) -> Result<(), String> {
-    blocking(move || add::start_database(&root)).await
+async fn start_database(root: String, shown_toml: String) -> Result<(), String> {
+    blocking(move || add::start_database(&root, &shown_toml)).await
 }
 
 /// Add the repo at `root`, if its setup still matches `shown_toml`.

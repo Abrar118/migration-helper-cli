@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
-import { addProject, previewProject, startDatabase } from "./api";
+import { addProject, pickComposeFiles, previewProject, startDatabase } from "./api";
 import { Problem, Queries, Sheet } from "./Sheets";
 import { Code, sentence, Slug } from "./text";
 import type { AddPreview } from "./types";
@@ -30,28 +30,71 @@ export function AddProject({ dir, onPickAgain, onCancel, onDone }: {
 }) {
   const [phase, setPhase] = useState<Phase>({ at: "reading" });
   const [hook, setHook] = useState(true);
+  const [composeFiles, setComposeFiles] = useState<string[]>([]);
+  const [useProxy, setUseProxy] = useState(false);
+  const [proxyReady, setProxyReady] = useState(false);
+  const request = useRef(0);
   const heading = useRef<HTMLHeadingElement>(null);
   const folder = dir.split(/[\\/]/).filter(Boolean).pop() ?? dir;
 
   const read = useCallback(async () => {
+    const id = ++request.current;
     setPhase({ at: "reading" });
+    setProxyReady(false);
     try {
-      const p = await previewProject(dir);
+      const p = await previewProject(dir, composeFiles, useProxy);
+      if (id !== request.current) return;
       setHook(!p.hook_installed);
       setPhase({ at: "review", p });
     } catch (e) {
+      if (id !== request.current) return;
       setPhase({ at: "unreadable", message: message(e) });
     }
-  }, [dir]);
+  }, [dir, composeFiles, useProxy]);
 
   useEffect(() => {
     read();
+    return () => { request.current++; };
   }, [read]);
   useEffect(() => {
     if (phase.at === "review" || phase.at === "unreadable") heading.current?.focus();
   }, [phase.at]);
 
   const busy = phase.at === "reading" || phase.at === "starting" || phase.at === "adding";
+  const existing = "p" in phase && phase.p.detected === null;
+  const files = "p" in phase ? phase.p.config.compose?.files ?? composeFiles : composeFiles;
+  const choices = (
+    <div className="add-setup">
+      <p className="note">Compose files: <Db>{files.length ? files.join(" → ") : "Docker Compose defaults"}</Db></p>
+      {!existing && composeFiles.length > 0 && <ol aria-label="Compose files in merge order">
+        {composeFiles.map((file, index) => <li key={`${index}:${file}`}>
+          <Db>{file}</Db>{" "}
+          <button className="text-button" disabled={busy || index === 0} aria-label={`Move ${file} earlier`} onClick={() => setComposeFiles(files => {
+            const next = [...files];
+            [next[index - 1], next[index]] = [next[index], next[index - 1]];
+            return next;
+          })}>Move earlier</button>{" "}
+          <button className="text-button" disabled={busy} aria-label={`Remove ${file}`} onClick={() => setComposeFiles(files => files.filter((_, i) => i !== index))}>Remove</button>
+        </li>)}
+      </ol>}
+      {!existing && <div className="row">
+        <button className="secondary" disabled={busy} onClick={async () => {
+          try { const picked = await pickComposeFiles(dir); if (picked?.length) setComposeFiles(picked); }
+          catch (e) { setPhase({ at: "unreadable", message: message(e) }); }
+        }}>Choose Compose file</button>
+        {composeFiles.length > 0 && <button className="secondary" disabled={busy} onClick={async () => {
+          try { const picked = await pickComposeFiles(dir, true); if (picked?.length) setComposeFiles(files => [...files, ...picked]); }
+          catch (e) { setPhase({ at: "unreadable", message: message(e) }); }
+        }}>Add override file</button>}
+        {composeFiles.length > 0 && <button className="text-button" disabled={busy} onClick={() => setComposeFiles([])}>Use default files</button>}
+      </div>}
+      {!existing && <label className="confirm key">
+        <input type="checkbox" checked={useProxy} disabled={busy} onChange={(e) => setUseProxy(e.target.checked)} />
+        <span>Use proxy routing. Your app connects through Sidetrack instead of rewriting an env file.</span>
+      </label>}
+      {existing && <p className="note">Using the settings in this project's sidetrack.toml.</p>}
+    </div>
+  );
   useEffect(() => {
     const onKey = (e: globalThis.KeyboardEvent) => {
       if (e.key !== "Escape" || busy) return;
@@ -73,6 +116,7 @@ export function AddProject({ dir, onPickAgain, onCancel, onDone }: {
     return (
       <Sheet label={`Can't add ${folder}`} title={<span ref={heading} tabIndex={-1}>Can't add {folder}</span>}>
         <Problem text={phase.message} />
+        {choices}
         <p className="note">sidetrack needs a git repository whose docker-compose has a Postgres service.</p>
         <div className="row standalone-row">
           <button className="secondary" onClick={onPickAgain}>Choose another folder</button>
@@ -89,8 +133,8 @@ export function AddProject({ dir, onPickAgain, onCancel, onDone }: {
   const start = async () => {
     setPhase({ at: "starting", p });
     try {
-      await startDatabase(p.root);
-      const again = await previewProject(p.root);
+      await startDatabase(p.root, p.toml);
+      const again = await previewProject(p.root, composeFiles, useProxy);
       setPhase({ at: "review", p: again, startError: again.database_running ? undefined : "it didn't come up; check `docker compose logs`" });
     } catch (e) {
       setPhase({ at: "review", p, startError: message(e) });
@@ -107,10 +151,14 @@ export function AddProject({ dir, onPickAgain, onCancel, onDone }: {
 
   const queries = [
     ...(d?.notes ?? []),
+    ...p.warnings,
     ...(p.registered ? ["it's already added; adding it again only links what's new"] : []),
     ...(p.database_running ? [] : [`the database (${c.database.service}) isn't running, so sidetrack can't check what's in it yet`]),
+    ...(c.routing.mode === "proxy" && p.database_running && !p.proxy_upstream ? ["the database must publish port 5432 for the proxy; publish a local port in Compose or set routing.upstream in sidetrack.toml"] : []),
   ];
   const proxy = c.routing.mode === "proxy";
+  const listen = c.routing.listen ?? "127.0.0.1:54320";
+  const proxyPort = listen.slice(listen.lastIndexOf(":") + 1);
 
   return (
     <section className="sheet add-sheet" aria-label={`Add ${p.name}`}>
@@ -118,8 +166,16 @@ export function AddProject({ dir, onPickAgain, onCancel, onDone }: {
       <div className="sheet-body">
         <h2 ref={heading} tabIndex={-1}>Add {p.name}</h2>
         <p className="add-path db">{p.root}</p>
+        {phase.at !== "added" && choices}
 
         <Queries warnings={queries} />
+        {proxy && d && phase.at !== "added" && <div className="add-setup">
+          <h3>Connect your app to the proxy</h3>
+          <p>After adding, point {d.inline.length ? d.inline.map((item) => `${item.variable} in ${item.service}`).join(", ") : "your app's database connection"} at <Db>host.docker.internal:{proxyPort}</Db> from containers, or <Db>127.0.0.1:{proxyPort}</Db> from this machine. Keep the database name <Db>{c.routing.database}</Db>, credentials, JDBC prefix and URL options.</p>
+          <p className="note">Add the project first to save these settings and start its proxy, then update the app connection and recreate its containers. The proxy listens on <Db>{listen}</Db>. On Linux, containers also need <Db>host.docker.internal:host-gateway</Db> in extra_hosts.</p>
+          <label className="confirm key"><input type="checkbox" checked={proxyReady} disabled={busy} onChange={(e) => setProxyReady(e.target.checked)} /><span>I will update the app connection after adding.</span></label>
+          <button className="secondary" disabled={busy} onClick={read}>Review setup again</button>
+        </div>}
         {!p.database_running && (
           <div className="row add-start">
             <button className="secondary" onClick={start} disabled={phase.at !== "review"}>
@@ -196,6 +252,7 @@ export function AddProject({ dir, onPickAgain, onCancel, onDone }: {
               <p>
                 {d ? <>Writes <Db>sidetrack.toml</Db> to the repo and links </> : <>Links </>}
                 <Db>{p.branch ?? "the checked-out branch"}</Db> to {active ? <Db>{active}</Db> : "the database the app uses now"}.
+                {proxy && <> Starts the proxy if automatic startup is enabled. Update the app connection and recreate its containers afterward.</>}
               </p>
               {!p.hook_installed && (
                 <label className="confirm key">
@@ -204,7 +261,7 @@ export function AddProject({ dir, onPickAgain, onCancel, onDone }: {
                 </label>
               )}
               <div className="row">
-                <button className="primary" onClick={add} disabled={!p.database_running || phase.at !== "review"}>Add</button>
+                <button className="primary" onClick={add} disabled={!p.database_running || phase.at !== "review" || (proxy && (!p.proxy_upstream || (d !== null && !proxyReady)))}>Add</button>
                 <button className="secondary" onClick={onCancel}>Cancel</button>
               </div>
             </>

@@ -97,6 +97,21 @@ impl Compose {
         )
     }
 
+    pub fn proxy_upstream(
+        &self,
+        service: &str,
+        configured: Option<&str>,
+    ) -> Result<Option<String>> {
+        match configured {
+            Some(address) => Ok(Some(address.to_string())),
+            None => Ok(self.port(service, 5432)?.map(|address| {
+                address
+                    .replace("0.0.0.0", "127.0.0.1")
+                    .replace("[::]", "127.0.0.1")
+            })),
+        }
+    }
+
     pub fn stop(&self, services: &[String]) -> Result<()> {
         if services.is_empty() {
             return Ok(());
@@ -148,7 +163,7 @@ pub struct ComposeModel {
 pub struct Service {
     #[serde(default)]
     pub image: Option<String>,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "deserialize_environment")]
     pub environment: BTreeMap<String, Option<String>>,
     #[serde(default)]
     pub env_file: Vec<EnvFileRef>,
@@ -181,6 +196,31 @@ pub struct Volume {
     pub source: Option<String>,
     #[serde(default)]
     pub target: Option<String>,
+}
+
+fn deserialize_environment<'de, D>(
+    deserializer: D,
+) -> Result<BTreeMap<String, Option<String>>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    #[derive(Deserialize)]
+    #[serde(untagged)]
+    enum Environment {
+        Map(BTreeMap<String, Option<String>>),
+        List(Vec<String>),
+    }
+
+    Ok(match Environment::deserialize(deserializer)? {
+        Environment::Map(map) => map,
+        Environment::List(items) => items
+            .into_iter()
+            .map(|item| match item.split_once('=') {
+                Some((key, value)) => (key.to_string(), Some(value.to_string())),
+                None => (item, None),
+            })
+            .collect(),
+    })
 }
 
 impl ComposeModel {
@@ -228,6 +268,18 @@ impl Service {
 mod tests {
     use super::*;
 
+    #[test]
+    fn explicit_proxy_upstream_does_not_require_compose() {
+        let compose = Compose::new("/nonexistent-sidetrack-project", vec![]);
+        assert_eq!(
+            compose
+                .proxy_upstream("db", Some("127.0.0.1:15432"))
+                .unwrap()
+                .as_deref(),
+            Some("127.0.0.1:15432")
+        );
+    }
+
     const JSON: &str = r#"{
       "name": "shop",
       "services": {
@@ -242,6 +294,33 @@ mod tests {
         "worker": {"depends_on": ["db"]}
       }
     }"#;
+
+    #[test]
+    fn parses_environment_list_without_losing_values() {
+        let m = ComposeModel::from_json(
+            r#"{"services":{"api":{"environment":[
+            "URL=jdbc:postgresql://db/app?options=a=b", "TOKEN=abc==",
+            "EMPTY=", "UNSET", "DUP=old", "DUP=new"
+        ]}}}"#,
+        )
+        .unwrap();
+        let api = &m.services["api"];
+        assert_eq!(api.env("URL"), Some("jdbc:postgresql://db/app?options=a=b"));
+        assert_eq!(api.env("TOKEN"), Some("abc=="));
+        assert_eq!(api.env("EMPTY"), Some(""));
+        assert_eq!(api.environment.get("UNSET"), Some(&None));
+        assert_eq!(api.env("DUP"), Some("new"));
+    }
+
+    #[test]
+    fn rejects_invalid_environment_values() {
+        for json in [
+            r#"{"services":{"api":{"environment":[1]}}}"#,
+            r#"{"services":{"api":{"environment":{"PORT":5432}}}}"#,
+        ] {
+            assert!(ComposeModel::from_json(json).is_err());
+        }
+    }
 
     #[test]
     fn parses_config_json() {

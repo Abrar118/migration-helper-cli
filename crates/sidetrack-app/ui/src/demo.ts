@@ -457,8 +457,10 @@ function deleteSteps(b: DbBranchView): Step[] {
 let demoDbStarted = false;
 
 /** A repo that isn't added yet, with its database stopped until "Start the database". */
-export async function demoPreview(dir: string): Promise<AddPreview> {
+export async function demoPreview(dir: string, composeFiles: string[] = [], proxy = false): Promise<AddPreview> {
   await new Promise((r) => setTimeout(r, 400));
+  const proxyListen = "127.0.0.1:54321";
+  const command = `docker compose${composeFiles.map(file => ` -f '${file.replaceAll("'", "'\\''")}'`).join("")} run --rm flyway migrate`;
   const toml = `[database]
 engine = "postgres"
 service = "db"
@@ -492,18 +494,22 @@ main_branch = "main"
       app_services: ["api", "flyway"],
       routing: { file: ".env", variable: "DB_NAME", services: ["api", "flyway"] },
       routing_problem: null,
+      inline: [],
       migrations: { tool: "flyway", dirs: ["db/migration"], command: "docker compose run --rm flyway migrate", service: "flyway" },
       notes: [],
     },
     config: {
       database: { engine: "postgres", service: "db", user: "app" },
-      routing: { mode: "env", file: ".env", variable: "DB_NAME", restart: ["api", "flyway"] },
-      migrations: { tool: "flyway", dirs: ["db/migration"], command: "docker compose run --rm flyway migrate" },
+      routing: { mode: proxy ? "proxy" : "env", file: ".env", variable: "DB_NAME", restart: ["api", "flyway"], ...(proxy ? { database: "inventory_dev", listen: proxyListen } : {}) },
+      compose: { files: composeFiles },
+      migrations: { tool: "flyway", dirs: ["db/migration"], command },
       git: { main_branch: "main" },
     },
-    toml,
+    toml: (proxy ? toml.replace('mode = "env"', `mode = "proxy"\ndatabase = "inventory_dev"\nlisten = "${proxyListen}"`) : toml).replace(/^command = .*$/m, `command = ${JSON.stringify(command)}`) + (composeFiles.length ? `\n[compose]\nfiles = ${JSON.stringify(composeFiles)}\n` : ""),
     database_running: demoDbStarted,
     hook_installed: false,
+    proxy_upstream: demoDbStarted ? "127.0.0.1:5432" : null,
+    warnings: composeFiles.length ? ["The generated migration command now includes the selected Compose files, in merge order. Review the command below before adding."] : [],
   };
 }
 

@@ -24,11 +24,46 @@ pub struct Setup {
     pub detected: Option<Detection>,
 }
 
+fn compose_path(root: &Path, file: &str) -> Result<std::path::PathBuf> {
+    // Preserve symlink spelling: Compose resolves relative paths from the selected file.
+    let mut path = std::path::PathBuf::new();
+    for component in root.join(file).components() {
+        match component {
+            std::path::Component::ParentDir => {
+                path.pop();
+            }
+            _ => path.push(component),
+        }
+    }
+    anyhow::ensure!(
+        path.is_file(),
+        "the selected Compose file doesn't exist: {}",
+        path.display()
+    );
+    Ok(path)
+}
+
 impl Setup {
     /// Read the repo at `dir`. Changes nothing.
-    pub fn read(dir: &Path, main_branch: Option<String>, proxy: bool) -> Result<Self> {
+    pub fn read(
+        dir: &Path,
+        main_branch: Option<String>,
+        proxy: bool,
+        compose_files: Vec<String>,
+    ) -> Result<Self> {
         let git = Git::discover(dir)?;
         let root = git.root().to_path_buf();
+        let compose_files: Vec<String> = compose_files
+            .into_iter()
+            .map(|file| {
+                let path = compose_path(&root, &file)?;
+                Ok(path
+                    .strip_prefix(&root)
+                    .unwrap_or(&path)
+                    .to_string_lossy()
+                    .replace('\\', "/"))
+            })
+            .collect::<Result<_>>()?;
         anyhow::ensure!(
             docker_available(),
             "Docker isn't reachable; start Docker and try again"
@@ -43,6 +78,20 @@ impl Setup {
 
         if Config::exists(&root) {
             let cfg = Config::load(&root)?;
+            if !compose_files.is_empty() {
+                let saved: Vec<_> = cfg
+                    .compose
+                    .files
+                    .iter()
+                    .map(|file| compose_path(&root, file))
+                    .collect::<Result<_>>()?;
+                let selected: Vec<_> = compose_files
+                    .iter()
+                    .map(|file| compose_path(&root, file))
+                    .collect::<Result<_>>()?;
+                anyhow::ensure!(selected == saved,
+                    "sidetrack.toml already selects the Compose files; edit [compose].files there before choosing different files");
+            }
             if proxy && !cfg.routing.is_proxy() {
                 bail!("{CONFIG_FILE} already exists in env mode; edit [routing] by hand (see the README's proxy section)");
             }
@@ -55,7 +104,15 @@ impl Setup {
             });
         }
 
-        let compose = Compose::new(&root, vec![]);
+        let compose = Compose::new(
+            &root,
+            compose_files.iter().map(|file| root.join(file)).collect(),
+        );
+        let compose_dir = compose_files
+            .first()
+            .and_then(|file| Path::new(file).parent())
+            .map(|dir| root.join(dir))
+            .unwrap_or_else(|| root.clone());
         let views = ComposeViews {
             resolved: compose
                 .config(ConfigView::Resolved)
@@ -63,7 +120,7 @@ impl Setup {
             env_files: compose.config(ConfigView::EnvFiles)?,
             raw: compose.config(ConfigView::Raw)?,
         };
-        let mut found = detect(&root, &root, &views)?;
+        let mut found = detect(&root, &compose_dir, &views)?;
         if found.user.is_none() {
             if let Some(file) = found.user_file.clone() {
                 if let Ok(u) = compose.exec(&found.db_service, &["cat", &file]) {
@@ -71,7 +128,7 @@ impl Setup {
                 }
             }
         }
-        let cfg = found.to_config(main_branch, proxy).context(
+        let cfg = found.to_config(main_branch, proxy, compose_files).context(
             "detection is incomplete; write sidetrack.toml by hand (see README) and run `sidetrack init` again",
         )?;
         Ok(Self {
@@ -93,6 +150,13 @@ impl Setup {
             .db_compose()
             .running_services()?
             .contains(&self.cfg.database.service))
+    }
+
+    pub fn proxy_upstream(&self) -> Result<Option<String>> {
+        self.db_compose().proxy_upstream(
+            &self.cfg.database.service,
+            self.cfg.routing.upstream.as_deref(),
+        )
     }
 
     /// `docker compose up -d <database service>`.
@@ -207,5 +271,224 @@ impl Setup {
             ));
         }
         Ok((ws, said))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    #[cfg(unix)]
+    fn selected_parent_symlink_keeps_relative_bind_base() {
+        if !docker_available() {
+            return;
+        }
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().canonicalize().unwrap();
+        std::fs::create_dir_all(root.join("real/docker")).unwrap();
+        std::os::unix::fs::symlink("real/docker", root.join("alias")).unwrap();
+        std::fs::write(root.join("real/docker/dev.yml"), "name: sidetrack-parent-symlink-test\nservices:\n  db:\n    image: postgres:16\n    volumes: [\"../data:/var/lib/postgresql/data\"]\n").unwrap();
+        let file = compose_path(&root, "alias/dev.yml").unwrap();
+        let model = Compose::new(&root, vec![file])
+            .config(ConfigView::Resolved)
+            .unwrap();
+        assert_eq!(
+            model.services["db"].volumes[0].source.as_deref(),
+            root.join("data").to_str()
+        );
+    }
+
+    #[test]
+    fn saved_proxy_setup_keeps_services_after_app_connection_changes() {
+        if !docker_available() {
+            return;
+        }
+        let (dir, _) = crate::git::testutil::repo();
+        let root_path = dir.path().canonicalize().unwrap();
+        let root = root_path.as_path();
+        let compose = r#"name: sidetrack-proxy-setup-test
+services:
+  db:
+    image: postgres:16
+    environment: ["POSTGRES_DB=shop"]
+  api:
+    image: postgres:16
+    environment: ["DATABASE_URL=postgresql://app@db:5432/shop"]
+"#;
+        std::fs::write(root.join("compose.yml"), compose).unwrap();
+        std::fs::write(
+            root.join("alembic.ini"),
+            "[alembic]\nscript_location = alembic\n",
+        )
+        .unwrap();
+        std::fs::create_dir_all(root.join("alembic/versions")).unwrap();
+        let setup = Setup::read(root, None, true, vec![]).unwrap();
+        assert_eq!(setup.cfg.routing.restart, ["api"]);
+        setup.cfg.save(root).unwrap();
+        std::fs::write(
+            root.join("compose.yml"),
+            compose.replace("@db:5432/", "@host.docker.internal:54320/"),
+        )
+        .unwrap();
+        let reread = Setup::read(root, None, true, vec![]).unwrap();
+        assert!(reread.detected.is_none());
+        assert_eq!(reread.cfg, setup.cfg);
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn selected_compose_symlink_keeps_its_project_directory() {
+        if !docker_available() {
+            return;
+        }
+        let (dir, _) = crate::git::testutil::repo();
+        let root_path = dir.path().canonicalize().unwrap();
+        let root = root_path.as_path();
+        std::fs::create_dir(root.join("docker")).unwrap();
+        std::fs::write(
+            root.join("docker/compose.yml"),
+            r#"name: sidetrack-symlink-test
+services:
+  db:
+    image: postgres:16
+    environment: ["POSTGRES_DB=${POSTGRES_DB}"]
+  api:
+    image: postgres:16
+    depends_on: [db]
+    environment: ["DATABASE_URL=${DATABASE_URL}"]
+"#,
+        )
+        .unwrap();
+        std::os::unix::fs::symlink("docker/compose.yml", root.join("dev.yml")).unwrap();
+        std::fs::write(
+            root.join(".env"),
+            "POSTGRES_DB=shop\nDATABASE_URL=postgresql://db/shop\n",
+        )
+        .unwrap();
+        std::fs::write(
+            root.join("docker/.env"),
+            "POSTGRES_DB=other\nDATABASE_URL=postgresql://db/other\n",
+        )
+        .unwrap();
+        std::fs::write(
+            root.join("alembic.ini"),
+            "[alembic]\nscript_location = alembic\n",
+        )
+        .unwrap();
+        std::fs::create_dir_all(root.join("alembic/versions")).unwrap();
+        let setup = Setup::read(root, None, false, vec!["dev.yml".into()]).unwrap();
+        assert_eq!(setup.cfg.compose.files, ["dev.yml"]);
+        assert_eq!(setup.detected.unwrap().active_db, "shop");
+        assert_eq!(setup.cfg.routing.file, ".env");
+    }
+
+    #[test]
+    fn selected_nested_compose_uses_its_own_dotenv() {
+        if !docker_available() {
+            return;
+        }
+        let (dir, _) = crate::git::testutil::repo();
+        let root_path = dir.path().canonicalize().unwrap();
+        let root = root_path.as_path();
+        std::fs::create_dir(root.join("docker")).unwrap();
+        std::fs::write(
+            root.join("docker/dev.yml"),
+            r#"name: sidetrack-nested-test
+services:
+  db:
+    image: postgres:16
+    environment: ["POSTGRES_DB=shop"]
+  api:
+    image: postgres:16
+    depends_on: [db]
+    environment: ["DATABASE_URL=${DATABASE_URL}"]
+"#,
+        )
+        .unwrap();
+        std::fs::write(root.join(".env"), "DATABASE_URL=postgresql://db/wrong_db\n").unwrap();
+        std::fs::write(
+            root.join("docker/.env"),
+            "DATABASE_URL=postgresql://db/shop\n",
+        )
+        .unwrap();
+        std::fs::write(
+            root.join("alembic.ini"),
+            "[alembic]\nscript_location = alembic\n",
+        )
+        .unwrap();
+        std::fs::create_dir_all(root.join("alembic/versions")).unwrap();
+        let setup = Setup::read(root, None, false, vec!["docker/dev.yml".into()]).unwrap();
+        assert_eq!(setup.cfg.routing.file, "docker/.env");
+        assert_eq!(setup.cfg.routing.variable, "DATABASE_URL");
+        assert_eq!(setup.cfg.compose.files, ["docker/dev.yml"]);
+    }
+
+    #[test]
+    fn chosen_compose_files_are_used_and_persisted() {
+        if !docker_available() {
+            return;
+        }
+        let (dir, _) = crate::git::testutil::repo();
+        let root_path = dir.path().canonicalize().unwrap();
+        let root = root_path.as_path();
+        std::fs::write(
+            root.join("compose.yml"),
+            "services:\n  unrelated:\n    image: redis:7\n",
+        )
+        .unwrap();
+        std::fs::write(
+            root.join("compose dev.yml"),
+            r#"name: sidetrack-selection-test
+services:
+  db:
+    image: postgres:16
+    environment: ["POSTGRES_DB=shop", "POSTGRES_USER=app"]
+  api:
+    build: .
+    depends_on: [db]
+    environment: ["DATABASE_URL=${DATABASE_URL}"]
+"#,
+        )
+        .unwrap();
+        std::fs::write(
+            root.join(".env"),
+            "DATABASE_URL=postgresql://app:dummy@db:5432/shop\n",
+        )
+        .unwrap();
+        std::fs::write(
+            root.join("alembic.ini"),
+            "[alembic]\nscript_location = alembic\n",
+        )
+        .unwrap();
+        std::fs::create_dir_all(root.join("alembic/versions")).unwrap();
+        assert!(Setup::read(root, None, false, vec![]).is_err());
+        let setup = Setup::read(
+            root,
+            None,
+            false,
+            vec![root.join("compose dev.yml").display().to_string()],
+        )
+        .unwrap();
+        assert_eq!(setup.cfg.compose.files, ["compose dev.yml"]);
+        assert_eq!(setup.cfg.database.service, "db");
+        assert!(setup
+            .cfg
+            .migrations
+            .command
+            .starts_with("docker compose -f 'compose dev.yml' exec -T api "));
+        setup.cfg.save(root).unwrap();
+        let reread = Setup::read(root, None, false, vec![]).unwrap();
+        assert_eq!(reread.cfg, setup.cfg);
+        let mut cfg = setup.cfg;
+        cfg.compose.files = vec!["./compose dev.yml".into()];
+        cfg.save(root).unwrap();
+        assert_eq!(
+            Setup::read(root, None, false, vec!["compose dev.yml".into()])
+                .unwrap()
+                .cfg,
+            cfg
+        );
+        assert!(Setup::read(root, None, false, vec!["compose.yml".into()]).is_err());
     }
 }

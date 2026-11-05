@@ -272,22 +272,18 @@ impl Workspace {
     /// Postgres as reached from this machine: `routing.upstream`, else the port
     /// compose publishes for the database service.
     pub fn proxy_upstream(&self) -> Result<String> {
-        if let Some(u) = &self.cfg.routing.upstream {
-            return Ok(u.clone());
-        }
-        let port = self
-            .db_compose
-            .port(&self.cfg.database.service, 5432)?
+        self.db_compose
+            .proxy_upstream(
+                &self.cfg.database.service,
+                self.cfg.routing.upstream.as_deref(),
+            )?
             .with_context(|| {
                 format!(
                     "{} doesn't publish port 5432; add `ports: [\"5432\"]` to it in compose, \
                  or set routing.upstream in sidetrack.toml",
                     self.cfg.database.service
                 )
-            })?;
-        Ok(port
-            .replace("0.0.0.0", "127.0.0.1")
-            .replace("[::]", "127.0.0.1"))
+            })
     }
 
     /// The database the app points at: the proxy's target in proxy mode, else the

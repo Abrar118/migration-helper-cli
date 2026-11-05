@@ -15,4 +15,8 @@ tauri = { version = "2", features = [] }
 serde.workspace = true
 serde_json.workspace = true
 anyhow.workspace = true
+toml.workspace = true
 tauri-plugin-dialog = "2"
+
+[dev-dependencies]
+tempfile.workspace = true

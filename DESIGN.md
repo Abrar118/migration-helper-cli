@@ -280,6 +280,9 @@ The column becomes the project: "Back to all projects", the project name as the 
 The sheet holds the DB branch tree: nodes with the Courier name at about 20px, size on the right, and one 15px soft sentence where facts that need a look ("the app uses it", "used in <worktree>", "its git branch is gone", "not on the server") are set in key at 600. Children hang off 1px key rules with a 12px tick, drawn like crop marks; separate roots are split by a 1px rule. Snapshots are 14px soft lines under their branch. Selection is shared: a git row and its DB node are selected together, both solid key; arrow keys move through either list. No process inks: they stay for step families.
 
 ### Actions and inline fields
+
+Add project keeps Compose-file selection and proxy routing on the proof, including on an unreadable setup. Proxy setup names the connection destination and explains the one-time connection change; save the setup and start the proxy before changing the app connection and recreating its containers. Existing `sidetrack.toml` settings are shown without setup overrides.
+
 Actions sit under the selected DB node, on paper, as 16px underlined text buttons in a row ("Snapshot", "Reset to app_dev", "Rename", "Delete"), closed by a 1px key rule; a soft 15px sentence says why an action is missing ("The app uses it, so it can't be deleted"). An action that needs input opens a small field in place, never a dialog: a 15px semibold soft label over a 46px square input with a 2px key border (Courier for branch names), then a secondary "Show the plan" and a "Cancel" text button. In the column, a git branch with no database gets the same field with a select ("Create its database from"). The planner's refusals appear under the field as a Query. Choosing an action replaces the tree with its proof; Escape steps back one level (proof, field, project).
 
 ### Proof sheet with crop marks

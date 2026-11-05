@@ -615,11 +615,20 @@ fn detect_migrations(
     })
 }
 
+fn container_listen(linux_host: bool, has_containers: bool) -> Option<&'static str> {
+    (linux_host && has_containers).then_some("0.0.0.0:54320")
+}
+
 impl Detection {
     /// Turn findings into a config. `user` must be known (resolve `user_file` first).
     /// With `proxy`, a DB name written directly in compose is fine: the app keeps
     /// its URL and the proxy routes it.
-    pub fn to_config(&self, main_branch: Option<String>, proxy: bool) -> Result<Config> {
+    pub fn to_config(
+        &self,
+        main_branch: Option<String>,
+        proxy: bool,
+        compose_files: Vec<String>,
+    ) -> Result<Config> {
         let (file, variable, mut restart) = match &self.routing {
             Some(r) => (r.file.clone(), r.variable.clone(), r.services.clone()),
             None if proxy && !self.inline.is_empty() => Default::default(),
@@ -646,6 +655,16 @@ impl Detection {
             .command
             .clone()
             .context("no migration command found; set migrations.command")?;
+        let command = match command.strip_prefix("docker compose ") {
+            Some(tail) if !compose_files.is_empty() => {
+                let mut prefix = "docker compose".to_string();
+                for file in &compose_files {
+                    prefix.push_str(&format!(" -f '{}'", file.replace('\'', "'\\''")));
+                }
+                format!("{prefix} {tail}")
+            }
+            _ => command,
+        };
         let user = self.user.clone().unwrap_or_else(|| "postgres".into());
         let mut cfg = Config {
             database: DatabaseConfig {
@@ -672,12 +691,18 @@ impl Detection {
                 version_table: None,
                 version_column: None,
             },
-            compose: ComposeConfig::default(),
+            compose: ComposeConfig {
+                files: compose_files,
+                project_dir: None,
+            },
             git: GitConfig { main_branch },
             snapshots: Default::default(),
         };
         if proxy {
             cfg.routing.use_proxy(&self.active_db);
+            cfg.routing.listen =
+                container_listen(cfg!(target_os = "linux"), !cfg.routing.restart.is_empty())
+                    .map(str::to_owned);
         }
         Ok(cfg)
     }
@@ -751,6 +776,18 @@ impl Detection {
 mod tests {
     use super::*;
 
+    #[test]
+    fn container_listener_choice_covers_all_host_and_container_combinations() {
+        for (linux, containers, expected) in [
+            (false, false, None),
+            (false, true, None),
+            (true, false, None),
+            (true, true, Some("0.0.0.0:54320")),
+        ] {
+            assert_eq!(container_listen(linux, containers), expected);
+        }
+    }
+
     fn model(json: &str) -> ComposeModel {
         ComposeModel::from_json(json).unwrap()
     }
@@ -814,11 +851,11 @@ mod tests {
             d.migrations.command.as_deref(),
             Some("docker compose exec -T api alembic -c /app/alembic.ini upgrade head")
         );
-        let cfg = d.to_config(Some("main".into()), false).unwrap();
+        let cfg = d.to_config(Some("main".into()), false, vec![]).unwrap();
         assert_eq!(cfg.database.user, "app");
         assert_eq!(cfg.routing.restart, ["api"]);
         // Proxy mode keeps the env file, so worktrees can get their own port.
-        let cfg = d.to_config(Some("main".into()), true).unwrap();
+        let cfg = d.to_config(Some("main".into()), true, vec![]).unwrap();
         assert_eq!(cfg.routing.database.as_deref(), Some("app_dev"));
         assert_eq!(
             (cfg.routing.file.as_str(), cfg.routing.variable.as_str()),
@@ -879,18 +916,89 @@ mod tests {
             .as_deref()
             .unwrap()
             .contains("written directly in the compose file"));
-        assert!(d.to_config(None, false).is_err());
+        assert!(d.to_config(None, false, vec![]).is_err());
 
         // Proxy mode doesn't need to change it.
         assert!(d
             .render(true)
             .contains("DATABASE_URL (web) in the compose file"));
-        let cfg = d.to_config(None, true).unwrap();
+        let cfg = d.to_config(None, true, vec![]).unwrap();
         cfg.validate().unwrap();
         assert!(cfg.routing.is_proxy());
         assert_eq!(cfg.routing.database.as_deref(), Some("postgres"));
         assert_eq!(cfg.routing.restart, ["web"]);
         assert!(cfg.routing.file.is_empty());
+    }
+
+    #[test]
+    fn jdbc_list_environment_supports_proxy_with_selected_compose_files() {
+        let dir = tempfile::tempdir().unwrap();
+        write(dir.path(), "migrations/001.sql", "");
+        let resolved = model(
+            r#"{"services":{
+            "db":{"image":"postgres:16","environment":{"POSTGRES_DB":"shop"}},
+            "web":{"depends_on":["db"],"environment":{"SPRING_DATASOURCE_URL":"jdbc:postgresql://db:5432/shop?options=a=b"}}
+        }}"#,
+        );
+        let raw = model(
+            r#"{"services":{
+            "db":{"image":"postgres:16","environment":["POSTGRES_DB=shop"]},
+            "web":{"depends_on":["db"],"environment":["SPRING_DATASOURCE_URL=jdbc:postgresql://db:5432/shop?options=a=b"]}
+        }}"#,
+        );
+        let views = ComposeViews {
+            resolved,
+            env_files: raw.clone(),
+            raw,
+        };
+        let mut d = detect(dir.path(), dir.path(), &views).unwrap();
+        d.migrations.command = Some("docker compose exec -T web ./migrate.sh".into());
+        let files = vec!["compose dev.yml".into(), "team's override.yml".into()];
+        assert!(d.to_config(None, false, files.clone()).is_err());
+        let cfg = d.to_config(None, true, files.clone()).unwrap();
+        cfg.validate().unwrap();
+        assert_eq!(cfg.compose.files, files);
+        assert_eq!(cfg.routing.database.as_deref(), Some("shop"));
+        assert_eq!(
+            cfg.routing.listen.as_deref(),
+            if cfg!(target_os = "linux") {
+                Some("0.0.0.0:54320")
+            } else {
+                None
+            }
+        );
+        assert_eq!(cfg.routing.restart, ["web"]);
+        assert_eq!(cfg.migrations.command, "docker compose -f 'compose dev.yml' -f 'team'\\''s override.yml' exec -T web ./migrate.sh");
+    }
+
+    #[test]
+    fn selecting_compose_files_preserves_non_compose_migration_commands() {
+        let dir = tempfile::tempdir().unwrap();
+        write(dir.path(), "migrations/001.sql", "");
+        let m = model(
+            r#"{"services":{"db":{"image":"postgres"},"api":{"depends_on":["db"],"environment":{"DATABASE_URL":"postgresql://db/postgres"}}}}"#,
+        );
+        let mut d = detect(
+            dir.path(),
+            dir.path(),
+            &ComposeViews {
+                resolved: m.clone(),
+                env_files: m.clone(),
+                raw: m,
+            },
+        )
+        .unwrap();
+        for command in [
+            "./migrate.sh",
+            "docker run --rm migrator",
+            "docker-compose exec api migrate",
+            "sh -c 'docker compose exec api migrate'",
+        ] {
+            d.migrations.command = Some(command.into());
+            let cfg = d.to_config(None, true, vec!["dev.yml".into()]).unwrap();
+            assert_eq!(cfg.migrations.command, command);
+            assert_eq!(cfg.compose.files, ["dev.yml"]);
+        }
     }
 
     #[test]

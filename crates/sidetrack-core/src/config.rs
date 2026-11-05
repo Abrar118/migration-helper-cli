@@ -95,6 +95,12 @@ impl RoutingConfig {
         self.listen.as_deref().unwrap_or(DEFAULT_PROXY_LISTEN)
     }
 
+    pub fn network_warning(&self) -> Option<&'static str> {
+        (self.is_proxy() && !self.listen_addr().parse::<std::net::SocketAddr>()
+            .is_ok_and(|address| address.ip().is_loopback()))
+            .then_some("The proxy listens beyond this machine's loopback interface. Other machines on the network may connect. Sidetrack adds no authentication; access is controlled by Postgres authentication and your firewall.")
+    }
+
     /// Switch to proxy mode, with the app connecting to `app_db`. The env file
     /// settings stay: git worktrees use them to point the app at their own port.
     pub fn use_proxy(&mut self, app_db: &str) {
@@ -134,6 +140,11 @@ pub struct ComposeConfig {
 }
 
 impl ComposeConfig {
+    pub fn portability_warning(&self) -> Option<&'static str> {
+        self.files.iter().any(|file| Path::new(file).is_absolute())
+            .then_some("This setup stores absolute Compose paths in sidetrack.toml. They preserve your selected files but may not work on another machine.")
+    }
+
     fn is_default(&self) -> bool {
         self == &Self::default()
     }
@@ -219,6 +230,38 @@ impl Config {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn compose_portability_warning_for_absolute_paths_only() {
+        let mut compose = ComposeConfig::default();
+        assert!(compose.portability_warning().is_none());
+        compose.files = vec!["compose.yml".into(), "./infra/dev.yml".into()];
+        assert!(compose.portability_warning().is_none());
+        compose.files.push(
+            std::env::current_dir()
+                .unwrap()
+                .join("dev.yml")
+                .display()
+                .to_string(),
+        );
+        assert!(compose.portability_warning().is_some());
+    }
+
+    #[test]
+    fn proxy_warning_only_for_non_loopback_listeners() {
+        let mut cfg = sample();
+        cfg.routing.use_proxy("app_dev");
+        for address in ["127.0.0.1:54320", "127.0.0.2:54321", "[::1]:54320"] {
+            cfg.routing.listen = Some(address.into());
+            assert!(cfg.routing.network_warning().is_none());
+        }
+        for address in ["0.0.0.0:54320", "[::]:54320", "192.168.1.5:54320"] {
+            cfg.routing.listen = Some(address.into());
+            assert!(cfg.routing.network_warning().is_some());
+        }
+        cfg.routing.mode = "env".into();
+        assert!(cfg.routing.network_warning().is_none());
+    }
 
     pub fn sample() -> Config {
         Config {
