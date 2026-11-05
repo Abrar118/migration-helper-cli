@@ -51,7 +51,7 @@ export function ProjectList({ projects, selected, onSelect }: Props) {
               onClick={() => onSelect(p.root)}
             >
               <span className="name">{p.name}</span>
-              <span className={`state${s.problem ? " problem" : ""}`}>{s.text}</span>
+              <span className={`state${s.problem ? " problem" : ""}`} title={s.problem ? s.text : undefined}>{s.text}</span>
             </button>
           </li>
         );

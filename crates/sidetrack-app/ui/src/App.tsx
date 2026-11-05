@@ -8,7 +8,7 @@ import { ProjectPage } from "./ProjectPage";
 import { EmptySheet, InSyncSheet, LoadErrorSheet, ProblemSheet, Sheet } from "./Sheets";
 import { createsDatabase, pendingOnly, target } from "./steps";
 import { Units } from "./text";
-import { applyTheme, loadTheme, type Theme } from "./theme";
+import { applyTheme, loadCollapsed, loadTheme, saveCollapsed, type Theme } from "./theme";
 import type { Overview, Plan, ProjectView } from "./types";
 
 type View = "projects" | "settings";
@@ -29,6 +29,8 @@ export function App() {
   const [setAside, setSetAside] = useState<Set<string>>(new Set());
   // A folder being added (Add project), until it's added or cancelled.
   const [adding, setAdding] = useState<string | null>(null);
+  // The column folded down to a rail with only its toggle.
+  const [collapsed, setCollapsed] = useState(loadCollapsed);
   const busy = useRef(false);
   const pinnedRef = useRef(pinned);
   pinnedRef.current = pinned;
@@ -71,6 +73,20 @@ export function App() {
   useEffect(() => {
     applyTheme(theme);
   }, [theme]);
+
+  useEffect(() => saveCollapsed(collapsed), [collapsed]);
+
+  // Ctrl+B (⌘B on a Mac) folds the column, as in most editors. Not while typing.
+  useEffect(() => {
+    const onKey = (e: globalThis.KeyboardEvent) => {
+      if (!(e.ctrlKey || e.metaKey) || e.shiftKey || e.altKey || e.key.toLowerCase() !== "b") return;
+      if (e.target instanceof Element && e.target.closest("input, textarea, select, [contenteditable]")) return;
+      e.preventDefault();
+      setCollapsed((c) => !c);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
 
   // State lives in git, Docker and env files, which change outside the app:
   // read it again whenever the window comes back to the front.
@@ -119,6 +135,20 @@ export function App() {
   const top = (
     <>
       <div className="top">
+        <button
+          className="col-toggle"
+          aria-controls="column"
+          aria-expanded={!collapsed}
+          aria-label={collapsed ? "Expand the sidebar" : "Collapse the sidebar"}
+          title={`${collapsed ? "Expand" : "Collapse"} the sidebar (${shortcut})`}
+          onClick={() => setCollapsed((c) => !c)}
+        >
+          <svg viewBox="0 0 20 20" aria-hidden="true">
+            <rect x="2.5" y="3.5" width="15" height="13" />
+            <line x1="7.5" y1="3.5" x2="7.5" y2="16.5" />
+            {collapsed ? <polyline points="10.5,7.5 13,10 10.5,12.5" /> : <polyline points="13,7.5 10.5,10 13,12.5" />}
+          </svg>
+        </button>
         <span className="mark">sidetrack</span>
         <nav className="nav" aria-label="Main">
           <button aria-current={view === "projects" ? "page" : undefined} onClick={() => setView("projects")}>Projects</button>
@@ -129,9 +159,11 @@ export function App() {
     </>
   );
 
+  const layout = collapsed ? "collapsed" : undefined;
+
   if (open && view === "projects") {
     return (
-      <div className="app">
+      <div className="app" data-col={layout}>
         <ProjectPage
           key={open}
           root={open}
@@ -144,8 +176,8 @@ export function App() {
   }
 
   return (
-    <div className="app">
-      <aside className="col">
+    <div className="app" data-col={layout}>
+      <aside className="col" id="column">
         {top}
         <h1>All projects</h1>
         {overview === null && !loadError ? (
@@ -261,6 +293,8 @@ function ProjectSheet(props: {
   if (p.problem) return <ProblemSheet p={p} />;
   return <InSyncSheet p={p} />;
 }
+
+const shortcut = typeof navigator !== "undefined" && /Mac|iPhone|iPad/.test(navigator.platform) ? "⌘B" : "Ctrl+B";
 
 const Nw = ({ children }: { children: ReactNode }) => <span className="nw">{children}</span>;
 

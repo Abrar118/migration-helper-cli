@@ -31,6 +31,7 @@ Last updated 2026-11-05. Read `CLAUDE.md` first, then this.
 | Desktop app: reset to any snapshot, delete a snapshot, proxy-start problems on the proof | merged (PR #25) |
 | Handoff update after PR #25 | merged (PR #26) |
 | **Desktop app: Add project (init from the app); init and hook install in the core** | **open as PR #27** |
+| **Desktop app: collapsible column** | **open as PR #28, stacked on #27**: merge #27 first, then retarget #28 to `main` |
 
 `main` is protected. Every PR needs one approval, including a code-owner review (`@Abrar118`). The owner can bypass the rules. Force-pushes and deletion are blocked.
 
@@ -145,6 +146,8 @@ See plan-v1.md, "Local proxy (v2)", decisions 17–25.
 - **Demo repos:** `D:\Demo\{flutter,nextjs,tauri}` on the owner's machine (not in this repo) are for trying this.
   - Each has Postgres, a stand-in `api` and Flyway migrations, with `main` plus two feature branches that each add a `V2`.
   - The generator script isn't committed.
+
+**Collapsible column (PR #28):** the toggle before the wordmark, or Ctrl+B (⌘B), folds the column to a 56px rail in both views. It isn't triggered while typing in a field, and the choice is remembered in localStorage (`sidetrack.sidebar-collapsed`).
 
 **Not built yet:** nothing from the v1.5/v2 app list. Next is MySQL (below), unless the owner's checks turn something up.
 
