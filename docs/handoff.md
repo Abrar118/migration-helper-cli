@@ -33,7 +33,8 @@ Last updated 2026-11-05. Read `CLAUDE.md` first, then this.
 | Desktop app: Add project (init from the app); init and hook install in the core | merged (PR #27) |
 | Desktop app: collapsible column; a plain error when a project's folder is gone | merged (PR #28, through #27's branch) |
 | Showcase screenshots in `public/`; Vite pre-bundles the Tauri modules | merged (PR #29) |
-| **Desktop app: a second look, "Canvas" (sidebar of sections, node canvases, drag and drop); host-drive disk space under Docker Desktop** | **open as PR #30** (branch `feat/app-canvas-look`) (see "The Canvas look" below) |
+| Desktop app: a second look, "Canvas" (sidebar of sections, node canvases, drag and drop); host-drive disk space under Docker Desktop | merged (PR #30) |
+| **Handoff update after PR #30** | **open as PR #31** |
 
 `main` is protected. Every PR needs one approval, including a code-owner review (`@Abrar118`). The owner can bypass the rules. Force-pushes and deletion are blocked.
 
@@ -41,7 +42,7 @@ After every PR merge, update this file: the State table, the follow-ups, and the
 
 Stacked PRs: merge the bottom one into `main` first, then retarget the next one to `main` before merging it. Merging an upper PR into its stacked base after that base has merged strands its commits (that's what happened to #18). Commits pushed to a PR after it merged are stranded too (that happened to #28's last commit).
 
-Stale remote branches were deleted on 2026-11-04. Since then, the merged branches `docs/handoff-after-pr10`, `feat/desktop-app`, `docs/handoff-after-pr12`, `feat/app-proxy-autostart`, `docs/handoff-after-pr14`, `feat/app-project-view`, `feat/app-plans`, `docs/handoff-after-pr17`, `feat/app-sheet-proofs`, `feat/proxy-tls`, `docs/handoff-after-pr21`, `feat/hook-app-approvals`, `docs/handoff-after-pr23`, `feat/app-op-gaps`, `docs/handoff-after-pr25`, `feat/app-add-project` and `feat/app-collapsible-sidebar` are back on the remote. The owner will clean them up later.
+Stale remote branches were deleted on 2026-11-04. Since then, the merged branches `docs/handoff-after-pr10`, `feat/desktop-app`, `docs/handoff-after-pr12`, `feat/app-proxy-autostart`, `docs/handoff-after-pr14`, `feat/app-project-view`, `feat/app-plans`, `docs/handoff-after-pr17`, `feat/app-sheet-proofs`, `feat/proxy-tls`, `docs/handoff-after-pr21`, `feat/hook-app-approvals`, `docs/handoff-after-pr23`, `feat/app-op-gaps`, `docs/handoff-after-pr25`, `feat/app-add-project`, `feat/app-collapsible-sidebar`, `docs/showcase-and-handoff-after-pr28` and `feat/app-canvas-look` are back on the remote. The owner will clean them up later.
 
 ## Getting going on a new machine
 
@@ -99,7 +100,7 @@ These were kept in one Claude account's memory; they're here so any session has 
 - **Screenshots go in `public/screenshots/`** and are listed in `public/README.md`. `.impeccable/review/` is git-ignored scratch space.
 - Short answers, real verification (screenshots of the actual render, real Docker when possible), and say plainly what wasn't checked.
 
-## The Canvas look (branch `feat/app-canvas-look`)
+## The Canvas look (PR #30)
 
 A second look, picked in Settings → Look; Press Proof stays the default and is unchanged. `DESIGN.md` → "The Canvas look" has the tokens and rules; the chosen layout sketch is `.impeccable/mocks/decision/canvas-d.html` (a full canvas, a card of actions under the selected node, a dock of drop targets, a details panel at the bottom).
 
@@ -117,7 +118,6 @@ A second look, picked in Settings → Look; Press Proof stays the default and is
 **Checked:** fmt, clippy (workspace and app), all tests, the UI build; the Impeccable detector on the changed files; screenshots of every section in light and dark, in the browser demo and in the real app against `D:\Demo-showcase` (real Docker and Postgres, nothing applied); `sidetrack doctor` there reads 77.4 GB free of 291.8 GB (drive C:) instead of 950 GB. The owner checked drag and drop by hand.
 
 **Left to do:**
-- Review and merge PR #30 (needs the owner's approval as code owner), then update this file.
 - Retake `public/screenshots/canvas/real*` now that disk space is fixed (`node crates/sidetrack-app/scripts/screenshots.mjs app <dir>` while the app runs with WebView2 remote debugging; see the script's header).
 - The macOS Docker Desktop path in `desktop_disk_dirs` (`~/Library/Containers/com.docker.docker/Data/vms/0/data`) is untested; Colima and OrbStack aren't detected.
 - No Apply has been run from the Canvas look against a real database yet (the plans and Apply are the same code as Press Proof's).
