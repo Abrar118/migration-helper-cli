@@ -6,8 +6,19 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use anyhow::{Context, Result};
+use serde::Serialize;
 
 use crate::process::{capture, capture_opt};
+
+/// One commit, as `git log` shows it.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct Commit {
+    /// Abbreviated id.
+    pub id: String,
+    pub subject: String,
+    /// Committer time, unix seconds.
+    pub time: i64,
+}
 
 #[derive(Debug, Clone)]
 pub struct Git {
@@ -87,6 +98,28 @@ impl Git {
             .lines()
             .map(str::to_string)
             .filter(|l| !l.is_empty() && l != target)
+            .collect())
+    }
+
+    /// The last `n` commits reachable from `rev`, newest first.
+    pub fn log(&self, rev: &str, n: usize) -> Result<Vec<Commit>> {
+        let out = self.run(&[
+            "log",
+            &format!("-n{n}"),
+            "--format=%h%x1f%ct%x1f%s",
+            rev,
+            "--",
+        ])?;
+        Ok(out
+            .lines()
+            .filter_map(|l| {
+                let mut f = l.splitn(3, '');
+                Some(Commit {
+                    id: f.next()?.to_string(),
+                    time: f.next()?.parse().ok()?,
+                    subject: f.next().unwrap_or("").to_string(),
+                })
+            })
             .collect())
     }
 
@@ -325,6 +358,12 @@ mod tests {
             ])
             .unwrap();
         assert_eq!(blobs, [Some("b".to_string()), None, Some("a".to_string())]);
+
+        let log = repo.log("refs/heads/feature/x", 2).unwrap();
+        let subjects: Vec<&str> = log.iter().map(|c| c.subject.as_str()).collect();
+        assert_eq!(subjects, ["b", "a"]);
+        assert!(log[0].time > 0 && !log[0].id.is_empty());
+        assert_eq!(repo.log("refs/heads/main", 10).unwrap().len(), 2);
 
         git(&repo, &["checkout", "-q", "--detach"]);
         assert_eq!(repo.current_branch().unwrap(), None);

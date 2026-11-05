@@ -1,5 +1,5 @@
-import type { Overview, Plan, Report } from "./types";
-import { demoApply, demoOverview } from "./demo";
+import type { Op, Overview, Plan, ProjectDetail, Report } from "./types";
+import { demoApply, demoDetail, demoOverview, demoPlan } from "./demo";
 
 /** Inside the Tauri window; otherwise (plain `vite` in a browser) demo data is used. */
 export const inApp = typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
@@ -10,22 +10,38 @@ export async function loadOverview(): Promise<Overview> {
   return invoke<Overview>("overview");
 }
 
+/** One project's git branches, DB branch tree, containers and recent commits. */
+export async function loadDetail(root: string): Promise<ProjectDetail> {
+  if (!inApp) return demoDetail(root);
+  const { invoke } = await import("@tauri-apps/api/core");
+  return invoke<ProjectDetail>("project_detail", { root });
+}
+
+/** The plan for `op` on the project at `root`, as the CLI would show it. */
+export async function planOp(root: string, op: Op): Promise<Plan> {
+  if (!inApp) return demoPlan(root, op);
+  const { invoke } = await import("@tauri-apps/api/core");
+  return invoke<Plan>("plan_op", { root, op });
+}
+
 /**
- * Apply the switch plan shown for `root`. `onLine` gets each progress line from
- * the applier ("→ <step>" when a step starts).
+ * Apply the plan shown for `op` on `root`. The Rust side builds it again and
+ * refuses if it changed. `onLine` gets each progress line from the applier
+ * ("→ <step>" when a step starts).
  */
-export async function applySwitch(
+export async function applyOp(
   root: string,
+  op: Op,
   shown: Plan,
   confirmDestructive: boolean,
   onLine: (line: string) => void,
 ): Promise<Report> {
-  if (!inApp) return demoApply(shown, onLine);
+  if (!inApp) return demoApply(root, shown, onLine);
   const { invoke } = await import("@tauri-apps/api/core");
   const { listen } = await import("@tauri-apps/api/event");
   const stop = await listen<string>("apply-progress", (e) => onLine(e.payload));
   try {
-    return await invoke<Report>("apply_switch", { root, shown, confirmDestructive });
+    return await invoke<Report>("apply_op", { root, op, shown, confirmDestructive });
   } finally {
     stop();
   }

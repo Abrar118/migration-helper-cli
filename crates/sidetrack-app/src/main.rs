@@ -5,15 +5,17 @@
 
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+mod ops;
 mod views;
 
-use anyhow::{bail, Context, Result};
+use anyhow::{bail, Result};
 use sidetrack_core::apply::Report;
 use sidetrack_core::plan::Plan;
 use sidetrack_core::workspace::Workspace;
 use tauri::{AppHandle, Emitter};
 
-use crate::views::Overview;
+use crate::ops::Op;
+use crate::views::{Overview, ProjectDetail};
 
 /// Every registered project with its current state and, when it's out of sync,
 /// the switch plan for its checked-out branch.
@@ -22,23 +24,46 @@ async fn overview() -> Result<Overview, String> {
     blocking(views::overview).await
 }
 
-/// Apply the switch plan the user was shown for the project at `root`.
+/// One project's git branches, DB branch tree, snapshots, worktrees,
+/// containers and recent commits. Read-only.
+#[tauri::command]
+async fn project_detail(root: String) -> Result<ProjectDetail, String> {
+    blocking(move || views::project_detail(&root)).await
+}
+
+/// The plan for `op` on the project at `root`. Like the CLI, it starts the
+/// proxy first (proxy mode with autostart), so copies hold connections instead
+/// of stopping the app.
+#[tauri::command]
+async fn plan_op(root: String, op: Op) -> Result<Plan, String> {
+    blocking(move || {
+        let ws = Workspace::open(root.as_ref())?;
+        if let Some(problem) = views::autostart(&ws) {
+            eprintln!("sidetrack: {problem}");
+        }
+        let world = ws.world()?;
+        ops::plan(&ws, &world, &op)
+    })
+    .await
+}
+
+/// Apply the plan for `op` that the user was shown for the project at `root`.
 ///
 /// The plan is built again first. If it no longer matches `shown`, nothing runs:
 /// the user only ever applies a plan they have seen. Destructive plans also need
 /// `confirm_destructive`.
 #[tauri::command]
-async fn apply_switch(
+async fn apply_op(
     app: AppHandle,
     root: String,
+    op: Op,
     shown: Plan,
     confirm_destructive: bool,
 ) -> Result<Report, String> {
     blocking(move || {
         let ws = Workspace::open(root.as_ref())?;
         let world = ws.world()?;
-        let plan = views::switch_plan(&ws, &world)?
-            .context("HEAD is detached, so there's no branch to switch to")?;
+        let plan = ops::plan(&ws, &world, &op)?;
         if plan != shown {
             bail!("the plan changed since it was shown (something else changed the project); review the new plan and apply again");
         }
@@ -65,7 +90,12 @@ async fn blocking<T: Send + 'static>(
 
 fn main() {
     tauri::Builder::default()
-        .invoke_handler(tauri::generate_handler![overview, apply_switch])
+        .invoke_handler(tauri::generate_handler![
+            overview,
+            project_detail,
+            plan_op,
+            apply_op
+        ])
         .run(tauri::generate_context!())
         .expect("error while running the sidetrack app");
 }
