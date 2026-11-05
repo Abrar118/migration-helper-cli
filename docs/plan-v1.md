@@ -102,7 +102,7 @@ Readers ask the database instead (`readers.rs`, `Workspace::read_migrations`):
 `routing.mode = "proxy"` routes the app through `sidetrack proxy` instead of rewriting an env file (`proxy.rs`).
 - **The target** (the active DB branch) is one line in `.git/sidetrack-proxy-target`. `switch` writes it with the `SetProxyTarget` step. If the file is missing, the target is `routing.database` itself. In proxy mode, `Workspace::active_db` reads this file, not the env file.
 - **The proxy** uses std threads and blocking sockets, with no async runtime.
-  - It answers SSL/GSS encryption requests with "no" and reads the startup message.
+  - It answers an SSL request with "yes" and ends TLS itself (see "Proxy TLS" below), answers GSS encryption requests with "no", and reads the startup message.
   - If `database` equals `routing.database`, it swaps in the target.
   - It then relays bytes both ways. Authentication passes through untouched.
   - Cancel requests are forwarded as they are.
@@ -113,7 +113,7 @@ Decisions:
 
 17. **The target lives in a file under `.git`, not in the registry.** The proxy re-reads it for each connection with no SQLite locking, it's per checkout, and it is never committed.
 18. **Copying the active database still stops the app.** `CREATE DATABASE … TEMPLATE` needs no connections to the source, and an app's connection pool would reconnect through the proxy straight away. Only services stopped for a copy are started again. A plain switch needs no restart.
-19. **No TLS between app and proxy.** It's local traffic. Clients with `sslmode=require` fail, and the docs say to use `prefer` or `disable`.
+19. **No TLS between app and proxy.** It's local traffic. Clients with `sslmode=require` fail, and the docs say to use `prefer` or `disable`. (Superseded by decision 31.)
 20. **Plans warn when the proxy isn't running** (`World.proxy_running`). They don't refuse, because the target can be set before the proxy starts.
 
 21. **`proxy --daemon` re-runs the binary in the background.** It's a child process in its own process group, so Ctrl-C in the terminal doesn't stop it, with stdout/stderr going to `.git/sidetrack-proxy.log`. The pid goes in `.git/sidetrack-proxy.pid` once the port accepts connections. `--stop` sends `kill` to that pid. There's no fork or libc, which keeps it simple, at the cost of being Unix-only for now.
@@ -158,6 +158,23 @@ Decisions:
 30. **Removed worktrees need no cleanup.** Their state files (port, target, pid, log) live in their own git dir, which `git worktree remove` deletes. `active_elsewhere` skips worktrees that can't be opened. Their DB branches follow the git branch, as everywhere else.
 
 `tests/e2e/proxy.sh` adds a worktree: own DB branch, own port (54330), main untouched, delete refused.
+
+## Proxy TLS
+
+The proxy answers an SSL request with "S", does the TLS handshake with a local self-signed certificate (`proxy::tls_config`), then reads and rewrites the startup message over the decrypted stream as before. The connection to Postgres stays plain.
+
+Decisions:
+
+31. **The proxy always accepts SSL requests, with no config switch.** Clients that worked before still work: `sslmode=disable` never asks, and `prefer` / `require` don't check the certificate (unless `~/.postgresql/root.crt` exists, which makes libpq verify). A switch could only turn off something that costs nothing until a client asks for it. If the certificate can't be loaded or created, the proxy says so on startup and answers "no" as before.
+32. **One certificate per machine, next to the registry** (`proxy-tls.pem`, certificate then key in one file).
+    - It's created the first time and kept, so a client that trusts it (`sslmode=verify-full`, `sslrootcert=<that file>`) keeps working across restarts, projects and worktrees. It isn't under `.git`, which is per checkout and goes away with a worktree.
+    - Names: `localhost`, `127.0.0.1`, `::1`, `host.docker.internal`. Valid until 4096 (the rcgen default), so it never needs renewing.
+    - One file, written to a temporary name and renamed, so two proxies starting at once never read a half-written or mismatched pair. Mode 0600 on Unix, since it holds the key.
+33. **rustls with the `ring` provider, not the default aws-lc-rs.** `ring` only needs a C compiler, which rusqlite's bundled SQLite already requires. aws-lc-rs can need cmake or nasm, depending on the platform. The provider is passed explicitly (`builder_with_provider`), because rustls panics on the implicit default when another crate in the build enables aws-lc-rs too.
+34. **No TLS to Postgres.** Local Docker Postgres has none. TLS on both legs would also break SCRAM channel binding: the server offers `SCRAM-SHA-256-PLUS` on a TLS connection, libpq (`channel_binding=prefer`) binds to the certificate it sees, which is the proxy's, and the server rejects it. Supporting a TLS-only server means rewriting the authentication exchange, so it's left for later.
+35. **The TLS relay keeps one thread per direction.** They share the rustls connection behind a mutex, held only while decrypting or encrypting, never while waiting on a socket. Only the Postgres → app thread writes to the app's socket, so TLS records go out in order.
+
+`tests/e2e/proxy.sh` connects with `sslmode=require`, and with `verify-full` against the saved certificate. Every other psql call in it uses the default `prefer`, so it goes over TLS too.
 
 ## Test strategy
 

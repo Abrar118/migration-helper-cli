@@ -10,17 +10,22 @@
 //! to the old database, so connection pools reconnect to the new one. Connections
 //! to other database names pass through untouched and are never closed.
 //!
-//! TLS isn't supported: SSL and GSS encryption requests are answered "no", which
-//! clients using the libpq default (`sslmode=prefer`) accept.
+//! An SSL request is answered "yes" and the proxy ends TLS itself, with a local
+//! self-signed certificate (`tls_config`), so `sslmode=require` clients work. The
+//! connection to Postgres stays plain. GSS encryption requests are answered "no".
 
 use std::collections::HashMap;
 use std::io::{self, Read, Write};
 use std::net::{Shutdown, TcpListener, TcpStream};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::Duration;
+
+use rustls::pki_types::pem::PemObject;
+use rustls::pki_types::{CertificateDer, PrivateKeyDer};
+use rustls::{ServerConfig, ServerConnection, StreamOwned};
 
 const SSL_REQUEST: u32 = 80_877_103;
 const GSSENC_REQUEST: u32 = 80_877_104;
@@ -206,6 +211,46 @@ pub fn release_hold(path: &std::path::Path) -> io::Result<()> {
     }
 }
 
+/// The proxy's TLS setup. The self-signed certificate and its key are kept in one
+/// file at `path`, created the first time, so a client that trusts the
+/// certificate (`sslmode=verify-full`) keeps working after restarts.
+pub fn tls_config(path: &Path) -> io::Result<Arc<ServerConfig>> {
+    let pem = match std::fs::read(path) {
+        Ok(pem) => pem,
+        Err(e) if e.kind() == io::ErrorKind::NotFound => {
+            let names = ["localhost", "127.0.0.1", "::1", "host.docker.internal"];
+            let new = rcgen::generate_simple_self_signed(names.map(String::from).to_vec())
+                .map_err(io::Error::other)?;
+            let pem = format!("{}{}", new.cert.pem(), new.signing_key.serialize_pem());
+            // Written whole, then renamed: two proxies starting at once (one per
+            // worktree) must never read a half-written file.
+            let tmp = path.with_extension(format!("tmp{}", std::process::id()));
+            let mut file = std::fs::OpenOptions::new();
+            file.write(true).create(true).truncate(true);
+            #[cfg(unix)]
+            std::os::unix::fs::OpenOptionsExt::mode(&mut file, 0o600); // it holds the key
+            file.open(&tmp)?.write_all(pem.as_bytes())?;
+            std::fs::rename(&tmp, path)?;
+            pem.into_bytes()
+        }
+        Err(e) => return Err(e),
+    };
+    let certs = CertificateDer::pem_slice_iter(&pem)
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(io::Error::other)?;
+    let key = PrivateKeyDer::from_pem_slice(&pem).map_err(io::Error::other)?;
+    // An explicit provider: `ServerConfig::builder()` panics if another crate in
+    // the build also enables aws-lc-rs, since the default is then ambiguous.
+    let provider = Arc::new(rustls::crypto::ring::default_provider());
+    let config = ServerConfig::builder_with_provider(provider)
+        .with_safe_default_protocol_versions()
+        .map_err(io::Error::other)?
+        .with_no_client_auth()
+        .with_single_cert(certs, key)
+        .map_err(io::Error::other)?;
+    Ok(Arc::new(config))
+}
+
 pub struct Proxy {
     /// The database name the app connects to.
     pub app_db: String,
@@ -218,6 +263,48 @@ pub struct Proxy {
     pub hold_file: PathBuf,
     /// How often the watcher re-reads `target_file`.
     pub poll: Duration,
+    /// Answers SSL requests with TLS when set, else with "no".
+    pub tls: Option<Arc<ServerConfig>>,
+}
+
+/// The app's side of a connection: plain, or TLS once it asked for SSL.
+enum Client {
+    Plain(TcpStream),
+    Tls(Box<StreamOwned<ServerConnection, TcpStream>>),
+}
+
+impl Client {
+    fn tcp(&self) -> &TcpStream {
+        match self {
+            Client::Plain(s) => s,
+            Client::Tls(t) => &t.sock,
+        }
+    }
+}
+
+impl Read for Client {
+    fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+        match self {
+            Client::Plain(s) => s.read(buf),
+            Client::Tls(t) => t.read(buf),
+        }
+    }
+}
+
+impl Write for Client {
+    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+        match self {
+            Client::Plain(s) => s.write(buf),
+            Client::Tls(t) => t.write(buf),
+        }
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        match self {
+            Client::Plain(s) => s.flush(),
+            Client::Tls(t) => t.flush(),
+        }
+    }
 }
 
 struct Routed {
@@ -286,15 +373,17 @@ impl Proxy {
     fn handle(
         &self,
         id: u64,
-        mut client: TcpStream,
+        client: TcpStream,
         routed: &Mutex<HashMap<u64, Routed>>,
         log: &Log,
     ) -> io::Result<()> {
         client.set_read_timeout(Some(Duration::from_secs(30)))?;
+        let mut client = Client::Plain(client);
         let mut startup = loop {
             let msg = read_startup(&mut client)?;
             match parse_startup(&msg)? {
-                Startup::SslRequest | Startup::GssEncRequest => client.write_all(b"N")?,
+                Startup::SslRequest => client = self.answer_ssl(client)?,
+                Startup::GssEncRequest => client.write_all(b"N")?,
                 Startup::Cancel(raw) => {
                     TcpStream::connect(&self.upstream)?.write_all(&raw)?;
                     return Ok(());
@@ -347,8 +436,8 @@ impl Proxy {
             unreachable!()
         };
         server.write_all(&encode_startup(protocol, params))?;
-        client.set_read_timeout(None)?;
-        let _ = client.set_nodelay(true);
+        client.tcp().set_read_timeout(None)?;
+        let _ = client.tcp().set_nodelay(true);
         let _ = server.set_nodelay(true);
         if rerouted {
             log(&format!("connection {id}: {} → {target}", self.app_db));
@@ -356,12 +445,35 @@ impl Proxy {
                 id,
                 Routed {
                     db: target,
-                    client: client.try_clone()?,
+                    client: client.tcp().try_clone()?,
                     server: server.try_clone()?,
                 },
             );
         }
-        relay(client, server)
+        match client {
+            Client::Plain(client) => relay(client, server),
+            Client::Tls(tls) => {
+                let (conn, client) = tls.into_parts();
+                relay_tls(conn, client, server)
+            }
+        }
+    }
+
+    /// "S" and TLS from here on when TLS is set up, else "N" (the client then
+    /// carries on in plain text, or gives up if it requires SSL).
+    fn answer_ssl(&self, client: Client) -> io::Result<Client> {
+        match (client, &self.tls) {
+            (Client::Plain(mut tcp), Some(config)) => {
+                tcp.write_all(b"S")?;
+                let conn = ServerConnection::new(config.clone()).map_err(io::Error::other)?;
+                // The handshake runs on the first read (the startup message).
+                Ok(Client::Tls(Box::new(StreamOwned::new(conn, tcp))))
+            }
+            (mut client, _) => {
+                client.write_all(b"N")?;
+                Ok(client)
+            }
+        }
     }
 }
 
@@ -377,6 +489,96 @@ fn relay(mut client: TcpStream, mut server: TcpStream) -> io::Result<()> {
     let _ = server.shutdown(Shutdown::Both);
     let _ = up.join();
     Ok(())
+}
+
+/// `relay` for a TLS client. The two directions share the TLS state, locked only
+/// while decrypting or encrypting, never while waiting on a socket, so neither
+/// direction blocks the other.
+fn relay_tls(
+    conn: ServerConnection,
+    mut client: TcpStream,
+    mut server: TcpStream,
+) -> io::Result<()> {
+    let conn = Arc::new(Mutex::new(conn));
+    let up = {
+        let (conn, mut c2, mut s2) = (conn.clone(), client.try_clone()?, server.try_clone()?);
+        thread::spawn(move || {
+            let _ = decrypt(&conn, &mut c2, &mut s2);
+            let _ = s2.shutdown(Shutdown::Both);
+        })
+    };
+    let _ = encrypt(&conn, &mut server, &mut client);
+    let _ = client.shutdown(Shutdown::Both);
+    let _ = server.shutdown(Shutdown::Both);
+    let _ = up.join();
+    Ok(())
+}
+
+/// App → Postgres. Starts by sending on any plaintext that arrived together
+/// with the startup message.
+fn decrypt(
+    conn: &Mutex<ServerConnection>,
+    client: &mut TcpStream,
+    server: &mut TcpStream,
+) -> io::Result<()> {
+    let mut buf = vec![0u8; 16 * 1024];
+    let mut n = 0;
+    let mut plain = Vec::new();
+    loop {
+        let closed = {
+            let mut c = conn.lock().unwrap();
+            let mut tls = &buf[..n];
+            loop {
+                match c.reader().read_to_end(&mut plain) {
+                    Ok(_) => break true, // the client sent close_notify
+                    Err(e) if e.kind() == io::ErrorKind::WouldBlock => {}
+                    Err(e) => return Err(e),
+                }
+                if tls.is_empty() {
+                    break false;
+                }
+                // read_tls may take only part of the bytes; loop until all are in.
+                c.read_tls(&mut tls)?;
+                c.process_new_packets().map_err(io::Error::other)?;
+            }
+        };
+        server.write_all(&plain)?;
+        plain.clear();
+        if closed {
+            return Ok(());
+        }
+        n = client.read(&mut buf)?;
+        if n == 0 {
+            return Ok(());
+        }
+    }
+}
+
+/// Postgres → app. Only this thread writes to the app's socket, so TLS records
+/// go out in the order they were made. A reply the decrypt side queues (e.g. to
+/// a key update) goes out with the next server data.
+fn encrypt(
+    conn: &Mutex<ServerConnection>,
+    server: &mut TcpStream,
+    client: &mut TcpStream,
+) -> io::Result<()> {
+    let mut buf = vec![0u8; 16 * 1024];
+    let mut tls = Vec::new();
+    loop {
+        let n = server.read(&mut buf)?;
+        if n == 0 {
+            return Ok(());
+        }
+        {
+            let mut c = conn.lock().unwrap();
+            c.writer().write_all(&buf[..n])?;
+            while c.wants_write() {
+                c.write_tls(&mut tls)?;
+            }
+        }
+        client.write_all(&tls)?;
+        tls.clear();
+    }
 }
 
 #[cfg(test)]
@@ -474,6 +676,7 @@ mod tests {
             target_file: target.clone(),
             hold_file: hold_path(&target),
             poll: Duration::from_millis(20),
+            tls: None,
         };
         thread::spawn(move || proxy.serve(listener, Arc::new(|_: &str| {})));
         let t = Duration::from_secs(5);
@@ -513,5 +716,93 @@ mod tests {
         other.write_all(b"pong").unwrap();
         other.read_exact(&mut buf).unwrap();
         assert_eq!(&buf, b"pong", "connections to other databases stay open");
+    }
+
+    #[test]
+    fn tls_clients_are_rerouted_and_plain_ones_still_work() {
+        let dir = tempfile::tempdir().unwrap();
+        let pem_file = dir.path().join("proxy-tls.pem");
+        let tls = tls_config(&pem_file).unwrap();
+        let pem = std::fs::read(&pem_file).unwrap();
+        tls_config(&pem_file).unwrap();
+        assert_eq!(
+            std::fs::read(&pem_file).unwrap(),
+            pem,
+            "the certificate is kept"
+        );
+
+        let target = dir.path().join("target");
+        write_target(&target, "feature_a_db").unwrap();
+        let (upstream, seen) = fake_upstream();
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap().to_string();
+        let proxy = Proxy {
+            app_db: "app_dev".into(),
+            upstream,
+            target_file: target.clone(),
+            hold_file: hold_path(&target),
+            poll: Duration::from_millis(20),
+            tls: Some(tls),
+        };
+        thread::spawn(move || proxy.serve(listener, Arc::new(|_: &str| {})));
+        let t = Duration::from_secs(5);
+
+        // A client that verifies the certificate, as with sslmode=verify-full.
+        let mut roots = rustls::RootCertStore::empty();
+        for cert in CertificateDer::pem_slice_iter(&pem) {
+            roots.add(cert.unwrap()).unwrap();
+        }
+        let provider = Arc::new(rustls::crypto::ring::default_provider());
+        let config = rustls::ClientConfig::builder_with_provider(provider)
+            .with_safe_default_protocol_versions()
+            .unwrap()
+            .with_root_certificates(roots)
+            .with_no_client_auth();
+        let mut tcp = TcpStream::connect(&addr).unwrap();
+        tcp.set_read_timeout(Some(t)).unwrap();
+        tcp.write_all(&[0, 0, 0, 8, 4, 210, 22, 47]).unwrap(); // SSLRequest
+        let mut answer = [0u8; 1];
+        tcp.read_exact(&mut answer).unwrap();
+        assert_eq!(&answer, b"S");
+        let name = "localhost".try_into().unwrap();
+        let conn = rustls::ClientConnection::new(Arc::new(config), name).unwrap();
+        let mut a = StreamOwned::new(conn, tcp);
+        a.write_all(&encode_startup(
+            196_608,
+            &params(&[("user", "app"), ("database", "app_dev")]),
+        ))
+        .unwrap();
+        assert_eq!(seen.recv_timeout(t).unwrap(), "feature_a_db");
+        // More than one TLS record each way.
+        let big: Vec<u8> = (0..40_000u32).map(|i| i as u8).collect();
+        a.write_all(&big).unwrap();
+        let mut back = vec![0u8; big.len()];
+        a.read_exact(&mut back).unwrap();
+        assert!(back == big, "data comes back intact");
+
+        // A switch still closes the app's TLS connection.
+        write_target(&target, "app_dev").unwrap();
+        let mut rest = Vec::new();
+        if let Err(e) = a.read_to_end(&mut rest) {
+            assert_eq!(
+                e.kind(),
+                io::ErrorKind::UnexpectedEof,
+                "closed, not timed out"
+            );
+        }
+
+        // A client that never asks for SSL (sslmode=disable) is unchanged.
+        let mut p = TcpStream::connect(&addr).unwrap();
+        p.set_read_timeout(Some(t)).unwrap();
+        p.write_all(&encode_startup(
+            196_608,
+            &params(&[("database", "app_dev")]),
+        ))
+        .unwrap();
+        assert_eq!(seen.recv_timeout(t).unwrap(), "app_dev");
+        p.write_all(b"ping").unwrap();
+        let mut buf = [0u8; 4];
+        p.read_exact(&mut buf).unwrap();
+        assert_eq!(&buf, b"ping");
     }
 }

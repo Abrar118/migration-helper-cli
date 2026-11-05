@@ -109,6 +109,7 @@ Detection is a pure function of those models plus the repo files, so tests feed 
 - Blocking std threads, no async runtime.
 - It rewrites `database` in the startup message only when it equals `routing.database`, and leaves other names alone.
 - After that it only relays bytes, so authentication passes through untouched.
+- **TLS:** an SSL request gets "S" and the proxy ends TLS itself (rustls with `ring`), with a self-signed certificate kept next to the registry (`proxy-tls.pem`, `proxy::tls_config`). The rewrite then happens on the decrypted stream. The connection to Postgres is always plain (plan decision 34). If the certificate can't be loaded, SSL requests get "N" as before.
 - A watcher polls the target file, and when the target changes it closes the app's connections to the old database.
 - Plans use `Step::SetProxyTarget` instead of `RewriteEnv`.
 - When the proxy is running, copies use `HoldConnections` / `ReleaseConnections` (`Planner::push_pause` / `push_unpause`) instead of stopping the app. The hold file sits next to the target and expires.
