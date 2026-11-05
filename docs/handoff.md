@@ -30,16 +30,17 @@ Last updated 2026-11-05. Read `CLAUDE.md` first, then this.
 | Handoff update after PR #23 | merged (PR #24) |
 | Desktop app: reset to any snapshot, delete a snapshot, proxy-start problems on the proof | merged (PR #25) |
 | Handoff update after PR #25 | merged (PR #26) |
-| **Desktop app: Add project (init from the app); init and hook install in the core** | **open as PR #27** |
-| **Desktop app: collapsible column** | **open as PR #28, stacked on #27**: merge #27 first, then retarget #28 to `main` |
+| Desktop app: Add project (init from the app); init and hook install in the core | merged (PR #27) |
+| Desktop app: collapsible column; a plain error when a project's folder is gone | merged (PR #28, through #27's branch) |
+| **Showcase screenshots in `public/`; Vite pre-bundles the Tauri modules** | **open as PR #29** (the commit pushed to #28 after #28 had merged into #27's branch) |
 
 `main` is protected. Every PR needs one approval, including a code-owner review (`@Abrar118`). The owner can bypass the rules. Force-pushes and deletion are blocked.
 
 After every PR merge, update this file: the State table, the follow-ups, and the date.
 
-Stacked PRs: merge the bottom one into `main` first, then retarget the next one to `main` before merging it. Merging an upper PR into its stacked base after that base has merged strands its commits (that's what happened to #18).
+Stacked PRs: merge the bottom one into `main` first, then retarget the next one to `main` before merging it. Merging an upper PR into its stacked base after that base has merged strands its commits (that's what happened to #18). Commits pushed to a PR after it merged are stranded too (that happened to #28's last commit).
 
-Stale remote branches were deleted on 2026-11-04. Since then, the merged branches `docs/handoff-after-pr10`, `feat/desktop-app`, `docs/handoff-after-pr12`, `feat/app-proxy-autostart`, `docs/handoff-after-pr14`, `feat/app-project-view`, `feat/app-plans`, `docs/handoff-after-pr17`, `feat/app-sheet-proofs`, `feat/proxy-tls`, `docs/handoff-after-pr21`, `feat/hook-app-approvals`, `docs/handoff-after-pr23`, `feat/app-op-gaps` and `docs/handoff-after-pr25` are back on the remote. The owner will clean them up later.
+Stale remote branches were deleted on 2026-11-04. Since then, the merged branches `docs/handoff-after-pr10`, `feat/desktop-app`, `docs/handoff-after-pr12`, `feat/app-proxy-autostart`, `docs/handoff-after-pr14`, `feat/app-project-view`, `feat/app-plans`, `docs/handoff-after-pr17`, `feat/app-sheet-proofs`, `feat/proxy-tls`, `docs/handoff-after-pr21`, `feat/hook-app-approvals`, `docs/handoff-after-pr23`, `feat/app-op-gaps`, `docs/handoff-after-pr25`, `feat/app-add-project` and `feat/app-collapsible-sidebar` are back on the remote. The owner will clean them up later.
 
 ## Getting going on a new machine
 
@@ -146,6 +147,8 @@ See plan-v1.md, "Local proxy (v2)", decisions 17–25.
 - **Demo repos:** `D:\Demo\{flutter,nextjs,tauri}` on the owner's machine (not in this repo) are for trying this.
   - Each has Postgres, a stand-in `api` and Flyway migrations, with `main` plus two feature branches that each add a `V2`.
   - The generator script isn't committed.
+
+**Showcase screenshots (PR #29):** `public/screenshots/` has 16 full-screen PNGs (3840×2160) of the real app, indexed in `public/README.md`. They were taken against `D:\Demo-showcase` on the owner's machine, which has its own registry. Add project isn't among them, because its native folder dialog can't be driven from the WebView.
 
 **Collapsible column (PR #28):** the toggle before the wordmark, or Ctrl+B (⌘B), folds the column to a 56px rail in both views. It isn't triggered while typing in a field, and the choice is remembered in localStorage (`sidetrack.sidebar-collapsed`).
 
