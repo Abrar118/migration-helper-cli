@@ -2,6 +2,14 @@
 
 Last updated 2026-11-05. Read `CLAUDE.md` first, then this.
 
+## Next: core hardening (design ready, not started)
+
+The owner wants detection, config and project-structure handling made solid **before any new database engine**. The design is `docs/superpowers/specs/2026-11-05-core-detection-hardening-design.md`; read it first, then plan with it (superpowers:writing-plans).
+
+- Order: a fixture set of real project shapes with expected results, then detection that returns candidates with evidence (and "unresolved") instead of failing, then runtime facts (compose labels, `pg_database`, `pg_stat_activity`), then a shared config check for `doctor` and planning plus typed fields and `version = 1`, then more migration tools. Decide multi-variable routing before adding an engine.
+- Waiting on the owner: which projects they'll add next (first fixtures), multi-variable routing, and what to do with several migration tools in one project.
+- Rules that came out of 2026-11-05: decisions 44 (only untracked files are written; tracked edits are suggested) and 45 (no AI model for now) in `plan-v1.md`.
+
 ## Compose setup fixes (merged PR #32)
 
 - Compose environment parsing accepts maps and `KEY=value` lists, preserving embedded `=`, empty strings and bare names.
@@ -60,6 +68,9 @@ Last updated 2026-11-05. Read `CLAUDE.md` first, then this.
 | Desktop app: a second look, "Canvas" (sidebar of sections, node canvases, drag and drop); host-drive disk space under Docker Desktop | merged (PR #30) |
 | Handoff update after PR #30 | merged (PR #31) |
 | Compose environment formats, explicit Compose files, guided proxy setup and review fixes | merged (PR #32) |
+| Handoff update after PR #32 | merged (PR #33) |
+| Inline compose URL: suggest the one-line edit; Check again in Add project | merged (PR #34) |
+| Core hardening design; decisions 44–45 | `docs/core-hardening-design` |
 | Handoff after PR #32 and remaining workspace files | merged (PR #33) |
 | Inline Compose URL edit guidance, retry and variable-collision checks | merged (PR #34) |
 
