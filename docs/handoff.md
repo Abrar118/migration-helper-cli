@@ -29,6 +29,9 @@ Last updated 2026-11-05. Read `CLAUDE.md` first, then this.
 | Approvals from the git hook: with no TTY, the hook tells the open app, which shows the switch proof | merged (PR #23) |
 | Handoff update after PR #23 | merged (PR #24) |
 | Desktop app: reset to any snapshot, delete a snapshot, proxy-start problems on the proof | merged (PR #25) |
+| Handoff update after PR #25 | merged (PR #26) |
+| **Desktop app: Add project (init from the app); init and hook install in the core** | **open as PR #27** |
+| **Desktop app: collapsible column** | **open as PR #28, stacked on #27**: merge #27 first, then retarget #28 to `main` |
 
 `main` is protected. Every PR needs one approval, including a code-owner review (`@Abrar118`). The owner can bypass the rules. Force-pushes and deletion are blocked.
 
@@ -36,7 +39,7 @@ After every PR merge, update this file: the State table, the follow-ups, and the
 
 Stacked PRs: merge the bottom one into `main` first, then retarget the next one to `main` before merging it. Merging an upper PR into its stacked base after that base has merged strands its commits (that's what happened to #18).
 
-Stale remote branches were deleted on 2026-11-04. Since then, the merged branches `docs/handoff-after-pr10`, `feat/desktop-app`, `docs/handoff-after-pr12`, `feat/app-proxy-autostart`, `docs/handoff-after-pr14`, `feat/app-project-view`, `feat/app-plans`, `docs/handoff-after-pr17`, `feat/app-sheet-proofs`, `feat/proxy-tls`, `docs/handoff-after-pr21`, `feat/hook-app-approvals`, `docs/handoff-after-pr23` and `feat/app-op-gaps` are back on the remote. The owner will clean them up later.
+Stale remote branches were deleted on 2026-11-04. Since then, the merged branches `docs/handoff-after-pr10`, `feat/desktop-app`, `docs/handoff-after-pr12`, `feat/app-proxy-autostart`, `docs/handoff-after-pr14`, `feat/app-project-view`, `feat/app-plans`, `docs/handoff-after-pr17`, `feat/app-sheet-proofs`, `feat/proxy-tls`, `docs/handoff-after-pr21`, `feat/hook-app-approvals`, `docs/handoff-after-pr23`, `feat/app-op-gaps` and `docs/handoff-after-pr25` are back on the remote. The owner will clean them up later.
 
 ## Getting going on a new machine
 
@@ -121,7 +124,7 @@ See plan-v1.md, "Local proxy (v2)", decisions 17–25.
 **Sheet devices and fixes (PR #20):** a registration target on in-sync / "nothing to clean up" sheets, a step-colour tint ramp in Settings, the sign-off always reachable on tall proofs, lead and path wrapping, Escape after a failed apply.
 - `.impeccable/design.json` is older than `DESIGN.md` and lacks the project view and new devices; `/impeccable document` would refresh it.
 
-**Still to check on a real machine** (owner, `npm run tauri dev`): the project view, including a project with the db container stopped and one with a linked worktree; applying a delete, a reset (including to another branch's snapshot) and a snapshot delete; an `sslmode=require` app through the proxy; with the app open, check out a branch in a GUI git client and approve the switch in the app.
+**Still to check on a real machine** (owner, `npm run tauri dev`): the project view, including a project with the db container stopped and one with a linked worktree; applying a delete, a reset (including to another branch's snapshot) and a snapshot delete; an `sslmode=require` app through the proxy; with the app open, check out a branch in a GUI git client and approve the switch in the app; add the `D:\Demo` projects with Add project.
 
 **Dev pitfall:** `npm run tauri dev` loads the UI from `localhost:5173` (`devUrl`). If an older Vite server from another checkout or worktree still holds that port, the app shows that checkout's UI. If that checkout is gone, it shows "Failed to fetch dynamically imported module". Stop the old server first.
 
@@ -129,6 +132,22 @@ See plan-v1.md, "Local proxy (v2)", decisions 17–25.
 - Checked: `notify::tests`, plus the built app on a temp registry answering `ok` for a registered root and `no` for another.
 - Not checked yet: the whole loop from a GUI client into the UI.
 - Gaps: while a project is open in the project view, the app only refreshes; if it's the same project, "See the switch plan" appears. A linked worktree's checkout only prints the hint.
+
+**Add project (PR #27):** "Add project" in the column (and on the empty screen) picks a folder and shows what `init` found as a proof: database, routing variable, migrations, checked-out branch, and the `sidetrack.toml` it writes. It can start the database, and the git hook is opt-out. See plan-v1.md, decisions 39–41.
+- **Moved to the core:** `init::Setup` and `sidetrack_core::hook`. The CLI's `init` now checks that the database is running before writing `sidetrack.toml`.
+- **Also fixed:**
+  - A switch that only runs migrations used to read "should switch to" with no name, and "The app will use ?". It now reads as migrations to run.
+  - A hook checkout that arrived during a refresh was lost; the app now reads again.
+- **Checked end to end:** on a clone of the flutter demo, with a temp registry, in the real app:
+  - preview, then start the database, then add, with the hook installed;
+  - the first plan, migrations only (Flyway V1), applied;
+  - a `git checkout feature/tags` from a shell with no TTY reached the app, and that switch was applied (copy, repoint, V2);
+  - checking out `main` again brought up the switch back.
+- **Demo repos:** `D:\Demo\{flutter,nextjs,tauri}` on the owner's machine (not in this repo) are for trying this.
+  - Each has Postgres, a stand-in `api` and Flyway migrations, with `main` plus two feature branches that each add a `V2`.
+  - The generator script isn't committed.
+
+**Collapsible column (PR #28):** the toggle before the wordmark, or Ctrl+B (⌘B), folds the column to a 56px rail in both views. It isn't triggered while typing in a field, and the choice is remembered in localStorage (`sidetrack.sidebar-collapsed`).
 
 **Not built yet:** nothing from the v1.5/v2 app list. Next is MySQL (below), unless the owner's checks turn something up.
 

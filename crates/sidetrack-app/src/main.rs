@@ -5,6 +5,7 @@
 
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+mod add;
 mod ops;
 mod views;
 
@@ -16,6 +17,7 @@ use sidetrack_core::registry::{self, Registry};
 use sidetrack_core::workspace::Workspace;
 use tauri::{AppHandle, Emitter, Manager, UserAttentionType};
 
+use crate::add::AddPreview;
 use crate::ops::{Op, Planned};
 use crate::views::{Overview, ProjectDetail};
 
@@ -80,6 +82,28 @@ async fn apply_op(
     .await
 }
 
+/// What adding the repo at (or above) `dir` would do. Changes nothing.
+#[tauri::command]
+async fn preview_project(dir: String) -> Result<AddPreview, String> {
+    blocking(move || add::preview(&dir)).await
+}
+
+/// Start the database container of the repo at `root`.
+#[tauri::command]
+async fn start_database(root: String) -> Result<(), String> {
+    blocking(move || add::start_database(&root)).await
+}
+
+/// Add the repo at `root`, if its setup still matches `shown_toml`.
+#[tauri::command]
+async fn add_project(
+    root: String,
+    shown_toml: String,
+    install_hook: bool,
+) -> Result<Vec<String>, String> {
+    blocking(move || add::add(&root, &shown_toml, install_hook)).await
+}
+
 /// Run blocking core work (git, docker, psql) off the main thread.
 async fn blocking<T: Send + 'static>(
     f: impl FnOnce() -> Result<T> + Send + 'static,
@@ -110,6 +134,7 @@ fn on_checkout(app: &AppHandle, root: &str) -> bool {
 
 fn main() {
     tauri::Builder::default()
+        .plugin(tauri_plugin_dialog::init())
         .setup(|app| {
             let handle = app.handle().clone();
             let listening = notify::port_file()
@@ -123,7 +148,10 @@ fn main() {
             overview,
             project_detail,
             plan_op,
-            apply_op
+            apply_op,
+            preview_project,
+            start_database,
+            add_project
         ])
         .run(tauri::generate_context!())
         .expect("error while running the sidetrack app");

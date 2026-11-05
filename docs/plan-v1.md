@@ -188,6 +188,16 @@ Decisions:
 
 `notify::tests` covers both answers and a stale port file. The owner checks the whole loop with a GUI git client.
 
+## Adding projects from the app
+
+"Add project" in the desktop app does what `sidetrack init` does (env mode only; `init --proxy` stays in the CLI). The logic moved to the core so both share it: `init::Setup::read` (detection, or the existing `sidetrack.toml`) and `Setup::register` (write the config, register, adopt, re-link). Installing the git hook moved to `sidetrack_core::hook`.
+
+Decisions:
+
+39. **Add re-reads the repo and refuses if the config differs from the one shown.** It's the same rule as `apply_op`: the user only ever adds what they saw. The preview sends the TOML it would write, and `add_project` compares it.
+40. **`register` checks that the database is running before it writes `sidetrack.toml`.** Before, `init` wrote the file and then stopped at "start the database first", leaving a config behind for a project that wasn't registered. The app offers "Start the database" (`docker compose up -d <service>`, `Setup::start_database`) instead of sending the user to a terminal.
+41. **The hook the app installs falls back on the CLI the app found** (`views::sidetrack_exe`: next to the app, on PATH, `~/.cargo/bin`), not on the app itself. When none is found, the hook is still written and the app says the CLI needs installing.
+
 ## Test strategy
 
 - **Unit tests:** naming, envfile, config round-trip, compose JSON parsing, detection on fixture directories, file-set logic, planner (pure inputs).

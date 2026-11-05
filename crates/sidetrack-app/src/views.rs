@@ -78,6 +78,9 @@ pub fn overview() -> Result<Overview> {
 }
 
 fn project_view(root: &str) -> (ProjectView, Option<DiskSpace>) {
+    if let Some(problem) = folder_gone(root) {
+        return (unreadable(root, &problem), None);
+    }
     let ws = match Workspace::open(Path::new(root)) {
         Ok(ws) => ws,
         Err(e) => return (unreadable(root, &format!("{e:#}")), None),
@@ -204,6 +207,9 @@ pub struct ServiceView {
 }
 
 pub fn project_detail(root: &str) -> Result<ProjectDetail> {
+    if let Some(problem) = folder_gone(root) {
+        anyhow::bail!(problem);
+    }
     let ws = Workspace::open(Path::new(root))?;
     let project = ws.project()?;
     let git_branch = ws.git.current_branch()?;
@@ -365,7 +371,7 @@ pub fn autostart(ws: &Workspace) -> Option<String> {
 /// The sidetrack CLI, which runs the proxy: next to this app, then on PATH,
 /// then in `~/.cargo/bin` (apps opened from a desktop often get a shorter PATH
 /// than the terminal).
-fn sidetrack_exe() -> Option<PathBuf> {
+pub fn sidetrack_exe() -> Option<PathBuf> {
     let name = format!("sidetrack{}", std::env::consts::EXE_SUFFIX);
     let beside = std::env::current_exe()
         .ok()
@@ -391,6 +397,17 @@ fn tilde(root: &str) -> String {
         Ok(h) if !h.is_empty() && root.starts_with(&h) => format!("~{}", &root[h.len()..]),
         _ => root.to_string(),
     }
+}
+
+/// A registered project whose folder was moved or deleted. Said plainly, rather
+/// than as git's "cannot change to …" error.
+fn folder_gone(root: &str) -> Option<String> {
+    (!Path::new(root).is_dir()).then(|| {
+        format!(
+            "its folder is gone; it was at {}. If it moved, add it again from where it is now (Add project)",
+            tilde(root)
+        )
+    })
 }
 
 fn unreadable(root: &str, problem: &str) -> ProjectView {

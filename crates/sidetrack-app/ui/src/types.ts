@@ -175,3 +175,38 @@ export type Op =
   | { op: "delete"; name: string }
   | { op: "rename"; old: string; new: string }
   | { op: "gc" };
+
+/** What detection found in a repo's compose setup (`detect::Detection`). */
+export interface Detection {
+  compose_project: string;
+  db_service: string;
+  db_image: string;
+  user: string | null;
+  active_db: string;
+  app_services: string[];
+  routing: { file: string; variable: string; services: string[] } | null;
+  routing_problem: string | null;
+  migrations: { tool: string; dirs: string[]; command: string | null; service: string | null };
+  notes: string[];
+}
+
+/** The parts of `sidetrack.toml` the Add project sheet shows (`config::Config`). */
+export interface ProjectConfig {
+  database: { engine: string; service: string; user: string };
+  routing: { mode: string; file: string; variable: string; restart: string[] };
+  migrations: { tool: string; dirs: string[]; command: string };
+  git: { main_branch: string | null };
+}
+
+/** What adding a repo would do (`add::AddPreview`). */
+export interface AddPreview {
+  root: string;
+  name: string;
+  branch: string | null;
+  registered: boolean;
+  detected: Detection | null;
+  config: ProjectConfig;
+  toml: string;
+  database_running: boolean;
+  hook_installed: boolean;
+}

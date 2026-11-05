@@ -1,7 +1,7 @@
 // Demo data for running the UI in a plain browser (`npm run dev`), where there is
 // no Rust side. It is synthetic, and the app labels it "Demo data" on screen.
 
-import type { Commit, DbBranchView, Op, Overview, Plan, ProjectDetail, Report, Step } from "./types";
+import type { AddPreview, Commit, DbBranchView, Op, Overview, Plan, ProjectDetail, Report, Step } from "./types";
 import { visibleSteps } from "./steps";
 import { bytes } from "./format";
 
@@ -421,5 +421,75 @@ function deleteSteps(b: DbBranchView): Step[] {
     ]),
     ...(b.on_server !== false ? [{ type: "drop_database", name: b.db_name } as Step] : []),
     { type: "forget_branch", db_name: b.db_name },
+  ];
+}
+
+// ------------------------------------------------------------- add project
+
+let demoDbStarted = false;
+
+/** A repo that isn't added yet, with its database stopped until "Start the database". */
+export async function demoPreview(dir: string): Promise<AddPreview> {
+  await new Promise((r) => setTimeout(r, 400));
+  const toml = `[database]
+engine = "postgres"
+service = "db"
+user = "app"
+
+[routing]
+mode = "env"
+file = ".env"
+variable = "DB_NAME"
+restart = ["api", "flyway"]
+
+[migrations]
+tool = "flyway"
+dirs = ["db/migration"]
+command = "docker compose run --rm flyway migrate"
+
+[git]
+main_branch = "main"
+`;
+  return {
+    root: dir,
+    name: dir.split(/[\/]/).pop() ?? dir,
+    branch: "main",
+    registered: false,
+    detected: {
+      compose_project: "inventory",
+      db_service: "db",
+      db_image: "postgres:16-alpine",
+      user: "app",
+      active_db: "inventory_dev",
+      app_services: ["api", "flyway"],
+      routing: { file: ".env", variable: "DB_NAME", services: ["api", "flyway"] },
+      routing_problem: null,
+      migrations: { tool: "flyway", dirs: ["db/migration"], command: "docker compose run --rm flyway migrate", service: "flyway" },
+      notes: [],
+    },
+    config: {
+      database: { engine: "postgres", service: "db", user: "app" },
+      routing: { mode: "env", file: ".env", variable: "DB_NAME", restart: ["api", "flyway"] },
+      migrations: { tool: "flyway", dirs: ["db/migration"], command: "docker compose run --rm flyway migrate" },
+      git: { main_branch: "main" },
+    },
+    toml,
+    database_running: demoDbStarted,
+    hook_installed: false,
+  };
+}
+
+export async function demoStartDatabase(): Promise<void> {
+  await new Promise((r) => setTimeout(r, 900));
+  demoDbStarted = true;
+}
+
+export async function demoAdd(_root: string, hook: boolean): Promise<string[]> {
+  await new Promise((r) => setTimeout(r, 700));
+  demoDbStarted = true;
+  return [
+    "Wrote sidetrack.toml. It holds no secrets and is safe to commit.",
+    "Linked main → inventory_dev (assuming it has every migration in this checkout).",
+    ...(hook ? ["Hook installed in /home/dev/code/inventory/.git/hooks/post-checkout."] : []),
   ];
 }

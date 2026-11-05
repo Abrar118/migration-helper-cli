@@ -94,12 +94,13 @@ export function ProblemSheet({ p }: { p: ProjectView }) {
   );
 }
 
-export function EmptySheet({ registry }: { registry: string }) {
+export function EmptySheet({ registry, onAdd }: { registry: string; onAdd: () => void }) {
   return (
     <Sheet label="No projects yet" title="No projects yet">
       <p className="problem-text">
-        <Code text="Run `sidetrack init` in a repository whose docker-compose has a Postgres service. It shows up here once it's set up." />
+        <Code text="Add a git repository whose docker-compose has a Postgres service. (`sidetrack init` in the repo does the same.)" />
       </p>
+      <div className="row standalone-row"><button className="primary" onClick={onAdd}>Add a project</button></div>
       <Slug className="standalone" items={["0 projects", registry]} />
     </Sheet>
   );

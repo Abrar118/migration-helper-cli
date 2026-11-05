@@ -70,7 +70,13 @@ h1, h2, h3, p, dl, dd, ul, ol { margin: 0; }
 .db, code { font-family: var(--mono); font-size: 0.94em; }
 code, .nw { white-space: nowrap; }
 
-.app { display: grid; grid-template-columns: 360px minmax(0, 1fr); height: 100%; }
+.app { display: grid; grid-template-columns: 360px minmax(0, 1fr); height: 100%; transition: grid-template-columns 180ms var(--ease-out); }
+
+/* Collapsed, the column is a rail with only its toggle; the sheet takes the room. */
+.app[data-col="collapsed"] { grid-template-columns: 56px minmax(0, 1fr); }
+.app[data-col="collapsed"] .col > :not(.top),
+.app[data-col="collapsed"] .top > :not(.col-toggle) { display: none; }
+.app[data-col="collapsed"] .top { justify-content: center; padding: 24px 0 0; }
 
 /* ------------------------------------------------------------- the column */
 
@@ -82,7 +88,23 @@ code, .nw { white-space: nowrap; }
   min-height: 0;
 }
 
-.top { display: flex; align-items: baseline; justify-content: space-between; padding: 28px 28px 0; }
+.top { display: flex; align-items: baseline; gap: 10px; padding: 28px 28px 0; }
+.top .nav { margin-left: auto; }
+.col-toggle {
+  align-self: center;
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  margin-left: -6px;
+  border: 0;
+  background: none;
+  color: var(--soft);
+}
+.col-toggle:hover { color: var(--ink); background: var(--table); }
+.col-toggle svg { width: 20px; height: 20px; fill: none; stroke: currentColor; stroke-width: 1.5; stroke-linejoin: round; stroke-linecap: round; }
+.app[data-col="collapsed"] .col-toggle { margin-left: 0; }
 .mark { font-size: 22px; font-weight: 700; letter-spacing: -0.01em; }
 
 .nav { display: flex; gap: 20px; }
@@ -116,7 +138,9 @@ code, .nw { white-space: nowrap; }
 }
 .row-button:hover { background: var(--table); }
 .row-button .name { display: block; font-size: 24px; font-weight: 600; letter-spacing: -0.015em; line-height: 1.15; margin-bottom: 5px; overflow-wrap: anywhere; }
-.row-button .state { display: block; font-size: 15px; color: var(--soft); }
+.row-button .state { display: block; font-size: 15px; color: var(--soft); overflow-wrap: anywhere; }
+/* A long error never runs past the column: three lines, the rest in the tooltip and on the sheet. */
+.row-button .state.problem { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 3; overflow: hidden; }
 .row-button .state.problem { color: var(--ink); font-weight: 600; }
 .row-button[aria-current="true"] { background: var(--ink); color: var(--paper); }
 .row-button[aria-current="true"] .state { color: var(--paper); }
@@ -221,6 +245,8 @@ code, .nw { white-space: nowrap; }
 
 .queries { margin-top: 16px; display: grid; gap: 6px; max-width: 75ch; }
 .query { font-size: 15px; }
+/* Commands quoted in errors can be longer than the sheet: let them wrap. */
+.query code { white-space: normal; overflow-wrap: anywhere; }
 .query strong { font-weight: 700; margin-right: 6px; }
 .note { font-size: 15px; color: var(--soft); max-width: 75ch; }
 .queries .note { margin: 0; }
@@ -273,6 +299,18 @@ code, .nw { white-space: nowrap; }
 
 .confirm { display: flex; gap: 10px; align-items: flex-start; font-size: 15px; }
 .confirm input { margin-top: 3px; accent-color: var(--spot); width: 16px; height: 16px; }
+.confirm.key input { accent-color: var(--ink); }
+
+/* Add project: the column's link, and the parts of its sheet a proof doesn't have. */
+.add-row { padding: 14px 28px; border-top: 1px solid var(--rule); }
+/* Short enough to fit; with sidetrack.toml open it scrolls, sign-off last. */
+.add-sheet .sheet-foot { position: static; }
+.add-path { font-size: 15px; color: var(--soft); margin: -8px 0 18px; overflow-wrap: anywhere; }
+.add-start { display: flex; align-items: center; gap: 18px; flex-wrap: wrap; margin: 4px 0 6px; }
+.add-start .query { margin: 0; }
+.toml { margin: 0 0 24px; font-size: 15px; }
+.toml summary { cursor: pointer; font-weight: 600; color: var(--soft); width: fit-content; }
+.toml pre { font-family: var(--mono); font-size: 14px; line-height: 1.6; margin-top: 10px; padding: 14px 18px; border-left: 2px solid var(--ink); overflow-x: auto; }
 
 /* ---------------------------------------------------- other sheets */
 
@@ -382,7 +420,8 @@ code, .nw { white-space: nowrap; }
 .inline-field.create .secondary { justify-self: start; margin-top: 4px; }
 
 .drops { list-style: none; padding: 0; font-size: 18px; line-height: 1.4; }
-.standalone-row { display: flex; margin-top: 22px; }
+.standalone-row { display: flex; align-items: center; gap: 18px; margin-top: 22px; }
+.standalone-row .primary { flex: none; }
 
 /* ---------------------------------------------------------------- settings */
 
@@ -430,6 +469,7 @@ code, .nw { white-space: nowrap; }
 }
 
 @media (prefers-reduced-motion: reduce) {
+  .app { transition: none; }
   .patch-ink, .patch b, .patch > span, .primary, .secondary { transition: none; }
   .patch[data-state="running"] .patch-ink { animation: none; clip-path: inset(0 50% 0 0); }
 }

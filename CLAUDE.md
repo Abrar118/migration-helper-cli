@@ -46,13 +46,14 @@ SIDETRACK_REGISTRY=/tmp/st.sqlite cargo run -p sidetrack -- -C /path/to/project 
 ## Architecture
 
 Three crates:
-- **`crates/sidetrack-core`** holds all logic and does no terminal I/O.
+- **`crates/sidetrack-core`** holds all logic and does no terminal I/O. That includes `init.rs` (`Setup::read` / `register`, shared by `sidetrack init` and the app's Add project) and `hook.rs` (installing the git hook).
 - **`crates/sidetrack`** is a thin layer: clap commands (`main.rs`), prompts and approval (`ui.rs`), and the git hook (`hook.rs`).
 - **`crates/sidetrack-app`** is the Tauri 2 desktop app (v1.5).
-  - **Rust side:** `src/main.rs` (commands), `src/views.rs` (per-project summary, and `project_detail` for the project view) and `src/ops.rs` (`Op`: switch, create, snapshot, reset, delete, rename, gc, each planned the way the CLI's `plan_command` does). It drives the core like the CLI does.
+  - **Rust side:** `src/main.rs` (commands), `src/views.rs` (per-project summary, and `project_detail` for the project view) `src/ops.rs` (`Op`: switch, create, snapshot, reset, delete, rename, gc, each planned the way the CLI's `plan_command` does) and `src/add.rs` (Add project: `preview`, `start_database`, `add`). It drives the core like the CLI does.
   - **Project view** (`ui/src/ProjectPage.tsx`): git branches in the column (with `Git::log` commits), the DB branch tree on the sheet, linked by selection. Without Docker or the database it still shows the registry and git, with server facts unknown, and offers no actions.
   - **Actions:** on the selected DB node (snapshot, and reset to its parent or any snapshot in the project, only for the active DB; delete only for an inactive one; nothing for another worktree's), on each snapshot of the selected node (delete, `snapshot rm`), on a git row with no DB (create), and Clean up (gc) in the lead. `plan_op` returns the plan, plus any proxy-start problem as `warnings` (`ops::Planned`), drawn by the same `Proof` as switches; the planner's refusals show as a Query where the action was chosen.
   - **Frontend:** React + Vite + TS in `ui/`.
+  - **Add project** (`ui/src/AddProject.tsx`): a folder picker (`tauri-plugin-dialog`), then what `init` found as a proof with an "OK to add" sign-off. `add_project` refuses if the TOML differs from the one shown, and the database must be running (the sheet can start it).
   - **Not a default workspace member:** it needs WebKitGTK and a built frontend, so build it with `cargo build -p sidetrack-app`. CI checks it in its own job.
   - **Same plan only:** `apply_op` builds the plan for the same `Op` again and refuses if it differs from the one shown, or if it drops a database without `confirm_destructive`.
   - **Visual system:** "Press Proof". Read `.impeccable/surfaces/*.md` (the direction contract) and `DESIGN.md` before changing the UI.
