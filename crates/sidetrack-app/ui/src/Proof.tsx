@@ -44,6 +44,30 @@ export function Proof({ root, name, op, plan, title, warnings = [], disk, freed 
     if (autoFocus) heading.current?.focus();
   }, [autoFocus]);
 
+  // Once the plan has run (or failed), Escape closes the proof like its button
+  // does. Never while it's applying.
+  useEffect(() => {
+    if (phase.at !== "finished" && phase.at !== "error") return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") onClose();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [phase.at, onClose]);
+
+  // The footer is sticky, so a proof taller than the window keeps its sign-off
+  // in reach. While it's stuck over the steps, a rule marks where it starts.
+  const foot = useRef<HTMLElement>(null);
+  const [stuck, setStuck] = useState(false);
+  useEffect(() => {
+    const el = foot.current;
+    if (!el) return;
+    // It sticks 1px past the window's edge, so it's only all in view when it isn't stuck.
+    const io = new IntersectionObserver(([e]) => setStuck(e.intersectionRatio < 1), { threshold: 1 });
+    io.observe(el);
+    return () => io.disconnect();
+  }, []);
+
   const steps = visibleSteps(plan);
   const drops = dropped(plan);
   const destructive = drops.length > 0;
@@ -157,7 +181,7 @@ export function Proof({ root, name, op, plan, title, warnings = [], disk, freed 
         </div>
       </div>
 
-      <footer className="sheet-foot">
+      <footer className="sheet-foot" ref={foot} data-stuck={stuck || undefined}>
         <Slug items={slug} />
         <div className={`signoff${destructive ? " spot" : ""}`} aria-live="polite">
           {phase.at === "review" && (

@@ -2,8 +2,8 @@ import { Fragment, useCallback, useEffect, useRef, useState, type FormEvent, typ
 import { loadDetail, planOp } from "./api";
 import { ago, bytes, plural } from "./format";
 import { Proof } from "./Proof";
-import { Queries, Sheet } from "./Sheets";
-import { Code, sentence, Slug } from "./text";
+import { Problem, Queries, Sheet } from "./Sheets";
+import { Code, sentence, Slug, Units } from "./text";
 import type { DbBranchView, GitBranchView, Op, Plan, ProjectDetail, ServiceView } from "./types";
 
 /** What's selected. A git branch and its DB branch are selected together. */
@@ -64,6 +64,7 @@ export function ProjectPage({ root, top, planWaiting, onBack }: Props) {
   const [shown, setShown] = useState<Shown | null>(null);
   const [applying, setApplying] = useState(false);
   const busy = useRef(false);
+  const main = useRef<HTMLElement>(null);
   const shownRef = useRef(shown);
   shownRef.current = shown;
 
@@ -134,6 +135,8 @@ export function ProjectPage({ root, top, planWaiting, onBack }: Props) {
         const plan = await planOp(root, op);
         setShown({ op, plan, title });
         setField(null);
+        // The tree may have been scrolled to its selection; a proof starts at the top, under its lead.
+        main.current?.scrollTo(0, 0);
       } catch (e) {
         setRefusal({ place, message: message(e) });
       } finally {
@@ -185,11 +188,11 @@ export function ProjectPage({ root, top, planWaiting, onBack }: Props) {
         {detail && <Containers services={detail.services} />}
       </aside>
 
-      <main className="main">
+      <main className="main" ref={main}>
         <div className="lead">
-          <p>{detail ? lead(detail, gitShown, dbSel) : error ? `Can't read ${name}` : " "}</p>
+          <p>{detail ? lead(detail, gitShown, dbSel, shown?.op) : error ? `Can't read ${name}` : " "}</p>
           <div className="lead-side">
-            {detail && <span className="where"><span className="nw">{detail.path}</span> · <span className="nw">{detail.mode === "proxy" ? "proxy" : "env file"}</span></span>}
+            {detail && <span className="where"><Units items={[detail.path, detail.mode === "proxy" ? "proxy" : "env file"]} /></span>}
             {planWaiting && <button className="text-button" onClick={onBack} disabled={applying}>See the switch plan</button>}
             {detail && !detail.problem && (
               <button
@@ -205,8 +208,7 @@ export function ProjectPage({ root, top, planWaiting, onBack }: Props) {
         </div>
         {shown && detail ? (
           shown.plan.steps.length === 0 ? (
-            <Sheet label="Nothing to clean up">
-              <h2>Nothing to clean up</h2>
+            <Sheet label="Nothing to clean up" title="Nothing to clean up" inRegister>
               <p className="problem-text">Every DB branch still has its git branch, and none is merged or missing.</p>
               {shown.plan.notes.map((n) => <p key={n} className="note"><Code text={sentence(n)} /></p>)}
               <div className="row standalone-row"><button className="secondary" autoFocus onClick={closeProof}>Back to the branches</button></div>
@@ -227,9 +229,8 @@ export function ProjectPage({ root, top, planWaiting, onBack }: Props) {
             />
           )
         ) : error ? (
-          <Sheet label={`Can't read ${name}`}>
-            <h2>Can't read {name}</h2>
-            <p className="problem-text"><Code text={sentence(error)} /></p>
+          <Sheet label={`Can't read ${name}`} title={`Can't read ${name}`}>
+            <Problem text={error} />
             <p className="note">Fix it, then refresh.</p>
           </Sheet>
         ) : detail ? (
@@ -240,20 +241,32 @@ export function ProjectPage({ root, top, planWaiting, onBack }: Props) {
   );
 }
 
-/** The line above the sheet: the selected pair in one sentence. */
-function lead(d: ProjectDetail, git: GitBranchView | null, db: DbBranchView | null): ReactNode {
+/**
+ * The line above the sheet: the selected pair in one sentence. Over a plan for
+ * the whole project (gc) it says why there's something to clean up instead.
+ * The last name or word is tied to the one before it, so it never ends up
+ * alone on a line.
+ */
+function lead(d: ProjectDetail, git: GitBranchView | null, db: DbBranchView | null, op?: Op): ReactNode {
   const Db = ({ children }: { children: ReactNode }) => <span className="db">{children}</span>;
-  if (git) {
-    if (!git.db) return <><Db>{git.name}</Db> has no database yet; switching to it creates one</>;
-    if (git.here && db && !db.active && d.active_db) {
-      return <><Db>{git.name}</Db> is checked out, but the app still uses <Db>{d.active_db}</Db></>;
-    }
-    if (git.here) return <><Db>{git.name}</Db> is checked out and the app uses <Db>{git.db}</Db></>;
-    return <><Db>{git.name}</Db> has <Db>{git.db}</Db></>;
+  if (op?.op === "gc") {
+    const n = d.db_branches.length;
+    const gone = d.db_branches.filter((b) => !b.git_branch_exists).length;
+    const branches = `${n} DB ${n === 1 ? "branch" : "branches"}`;
+    if (gone === 0) return <>{d.name} has&nbsp;{branches}</>;
+    return <>{gone} of {branches} {gone === 1 ? "has" : "have"} lost {gone === 1 ? "its" : "their"} git&nbsp;branch</>;
   }
-  if (db && !db.git_branch_exists) return <>The git branch for <Db>{db.db_name}</Db>, <Db>{db.git_branch}</Db>, is gone</>;
-  if (db) return <><Db>{db.db_name}</Db> belongs to <Db>{db.git_branch}</Db></>;
-  return <>{d.name} has no branches to show</>;
+  if (git) {
+    if (!git.db) return <><Db>{git.name}</Db> has no database yet; switching to it creates&nbsp;one</>;
+    if (git.here && db && !db.active && d.active_db) {
+      return <><Db>{git.name}</Db> is checked out, but the app still uses&nbsp;<Db>{d.active_db}</Db></>;
+    }
+    if (git.here) return <><Db>{git.name}</Db> is checked out and the app uses&nbsp;<Db>{git.db}</Db></>;
+    return <><Db>{git.name}</Db> has&nbsp;<Db>{git.db}</Db></>;
+  }
+  if (db && !db.git_branch_exists) return <>The git branch for <Db>{db.db_name}</Db>, <Db>{db.git_branch}</Db>, is&nbsp;gone</>;
+  if (db) return <><Db>{db.db_name}</Db> belongs to&nbsp;<Db>{db.git_branch}</Db></>;
+  return <>{d.name} has no branches to&nbsp;show</>;
 }
 
 /** Up and down move the selection through a list of buttons with these ids. */
@@ -396,8 +409,7 @@ function DbTree({ detail, selected, onSelect, actions }: { detail: ProjectDetail
   const nodeActions = (b: DbBranchView) => (d.problem ? null : <NodeActions b={b} detail={d} actions={actions} />);
 
   return (
-    <Sheet label={`Database branches of ${d.name}`}>
-      <h2>Database branches</h2>
+    <Sheet label={`Database branches of ${d.name}`} title="Database branches">
       <Queries warnings={queries} />
       {roots.length === 0 ? (
         <p className="problem-text tree-empty">
